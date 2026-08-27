@@ -41,8 +41,9 @@ PORT=$(ssh wsl 'ssh windows "schtasks /query /tn chromedebug /xml"' \
 export CDP_HTTP="http://127.0.0.1:$PORT"   # cdp.py and every check below read this
 ```
 
-As of 2026-08-10 the port is **9223** (9222 is WinNAT-blocked). Everything
-below uses `$PORT` / `$CDP_HTTP`; substitute the discovered value.
+As of 2026-08-27 the port is **9444** (9222, 9223, 9250 and 9333 got
+WinNAT-blocked in turn). Everything below uses `$PORT` / `$CDP_HTTP`;
+substitute the discovered value.
 
 ## Step 0 — preflight: is there a path to the browser?
 
@@ -157,6 +158,9 @@ This opens a visible window on Iliyas's screen — say so when you do it. The
 task runs as `LogonType=InteractiveToken` (General tab: "Run only when user is
 logged on"), so it launches into his visible session and stores no password.
 
+If the relaunch works but Chrome is dead again minutes later, don't keep
+relaunching — see "Death gotcha".
+
 ## Port gotcha — WinNAT can steal the debug port
 
 **Symptom:** the debug Chrome is running and browses fine, but
@@ -212,6 +216,72 @@ startport=<PORT> numberofports=1 store=persistent; net start winnat`. Stopping
 winnat briefly drops WSL2/Hyper-V NAT, which can blip an SSH path that runs
 through it — do it only when a short interruption is safe.
 
+## Death gotcha — Task Scheduler kills Chrome on battery flap
+
+**Symptom:** the opposite of the Port gotcha — the debug Chrome *process*
+dies minutes after every launch (0 `chrome.exe` with `chrome-debug` in the
+command line), while the debug port is free and bindable. `schtasks /run /tn
+chromedebug` brings CDP back, then it's dead again within ~2 minutes.
+
+**Cause:** the PC is a laptop, and a task created with default settings gets
+`StopIfGoingOnBatteries=true` / `DisallowStartIfOnBatteries=true`. Windows'
+AC/battery status can flap every couple of minutes *even with the charger
+plugged in* (battery-care charge limiting, loose connector), and on every
+flap Task Scheduler terminates the task's Chrome. The proof is Task Scheduler
+operational-log event **327**: `Task Scheduler stopped instance ... of task
+"\chromedebug" because the computer is switching to battery power.` The
+`chromedebug` task already carries the fixed settings, but any recreation of
+the task with `New-ScheduledTask`/`Register-ScheduledTask` default settings
+silently reintroduces the killers — so re-check the settings whenever this
+symptom returns.
+
+**Diagnose:**
+
+1. `schtasks /query /tn chromedebug /xml` — in `<Settings>`,
+   `StopIfGoingOnBatteries` / `DisallowStartIfOnBatteries` must be `false`
+   and `ExecutionTimeLimit` `PT0S` (unlimited). If they aren't, that's the
+   bug — go straight to the fix.
+2. The Task Scheduler operational log is disabled by default; enable it and
+   catch the next death in the act:
+
+   ```powershell
+   wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true
+   # after a death:
+   Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 100 |
+     ? { $_.Message -match 'chromedebug' } | select TimeCreated, Id, Message
+   ```
+
+   Event 327 with "switching to battery power" = this gotcha. No 32x
+   stop-event at all = Chrome itself crashed — add
+   `--enable-logging --v=1` to the task action, reproduce, read
+   `C:\chrome-debug\chrome_debug.log`, then revert the flags.
+3. Battery reality check: `Get-CimInstance Win32_Battery` (a result means
+   it's a laptop) and
+   `[System.Windows.Forms.SystemInformation]::PowerStatus` (after
+   `Add-Type -AssemblyName System.Windows.Forms`) for the current AC state.
+
+**Durable fix** — replace the task's settings, keeping the action and the
+`InteractiveToken` principal (`Set-ScheduledTask` never touches parts you
+don't pass). Put this in a `.ps1` and run it through the `-EncodedCommand`
+transport rather than quoting it inline across the two SSH hops:
+
+```powershell
+$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+     -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+Set-ScheduledTask -TaskName 'chromedebug' -Settings $s
+```
+
+```bash
+# from dev-remote: encode UTF-16LE+base64, run via the double hop
+B64=$(iconv -f UTF-8 -t UTF-16LE /tmp/fix.ps1 | base64 -w0)
+ssh wsl "ssh windows 'powershell -NoProfile -EncodedCommand $B64'"
+```
+
+(`-ExecutionTimeLimit` zero matters: `New-ScheduledTaskSettingsSet` otherwise
+defaults it to 72 h, which would kill Chrome three days in.) Then relaunch and
+— the real test — confirm the process count is still non-zero **4–5 minutes
+later**, past the flap interval, not just that CDP answered once.
+
 ## How the access is wired (and repairing it)
 
 Both machines are nodes on Iliyas's Tailscale tailnet:
@@ -232,7 +302,20 @@ when Iliyas's network moves. When Step 0 says `NO_CDP`:
   `iliyasone` offline. Nothing to fix from dev-remote.
 - **Chrome not running** but `ssh wsl` works: see "Launching".
 - **Port stolen by WinNAT**: see "Port gotcha".
+- **Chrome dies again right after relaunch**: see "Death gotcha".
 - **Tunnel not up**: re-run the forwards from Step 0.
+- **MTU blackhole on the tailnet path** (seen 2026-08-15): `ping` works but
+  `ssh wsl` hangs at `expecting SSH2_MSG_KEX_ECDH_REPLY`, or small CDP calls
+  (`/json/version`) work while big ones (`/json/list`) return nothing — large
+  packets are being dropped between dev-remote and `iliyasone`. Two-part fix:
+  force a small classic KEX on every ssh to wsl
+  (`-o KexAlgorithms=curve25519-sha256@libssh.org,curve25519-sha256` — the
+  default post-quantum sntrup761 KEX sends oversized packets), and lower the
+  interface MTU on dev-remote: `ip link set dev tailscale0 mtu 1200` (default
+  1280 exceeds the real path MTU). The MTU setting does **not** survive a
+  dev-remote reboot — `ip link show tailscale0` first whenever big transfers
+  stall, and re-apply. Tunnels opened before the MTU fix keep their broken
+  MSS — restart them after changing the MTU.
 
 Only one home node is on the tailnet today (`iliyasone`). If Iliyas later
 works from a different machine, it joins as a separate node with its own
