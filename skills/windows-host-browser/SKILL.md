@@ -115,6 +115,24 @@ From there it is plain CDP against `$CDP_HTTP`:
 - `PUT /json/new?url=…` — open a page (a visible tab on Iliyas's screen —
   say so when you do it).
 
+### Reuse existing windows — don't multiply them
+
+Every window and tab is on Iliyas's screen, and he has asked agents to stop
+spawning new windows. Before opening anything, `GET /json/list` and reuse
+what's there, in this order:
+
+1. **A blank tab exists** (`about:blank` or `chrome://newtab/`): navigate it
+   (attach to its websocket, `Page.navigate`) instead of creating a target.
+2. **The open tabs are your own or clearly idle** (not something Iliyas is
+   actively working in): open your page as a tab in that same window —
+   `PUT /json/new` does this, it targets an existing window.
+3. **A new window** only when you deliberately want one — e.g. the existing
+   window is full of Iliyas's unrelated active work, or you need isolation
+   (different window size, a flow he should watch separately). Say why.
+
+Same on cleanup: `/json/close/<id>` the tabs you opened; never close tabs
+you didn't open.
+
 ## Proxy control — `cdp.py`
 
 Chrome carries the **Proxy Switcher** extension
