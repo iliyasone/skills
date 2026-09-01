@@ -28,30 +28,45 @@ Two consequences drive everything below:
   browser-wide changes (proxy!) when done. For data you could equally get by
   asking him or via an authed CLI, prefer that.
 
-## The port is not fixed — discover it
+## Step 0 — connect: run `connect.sh`, use the fixed endpoint
 
-9222 was the original debug port, but Windows WinNAT can reserve it out from
-under Chrome (see "Port gotcha"), so the launch may use any port. **Never
-hardcode the port** — read it from the scheduled task, which is the source of
-truth:
+On dev-remote the endpoint is **fixed**: `http://127.0.0.1:18800`, no matter
+which port Chrome uses on the Windows side. One command sets everything up:
+
+```bash
+~/.agents/skills/windows-host-browser/connect.sh
+# on success prints:  CDP_HTTP=http://127.0.0.1:18800
+export CDP_HTTP="http://127.0.0.1:18800"
+```
+
+The script is idempotent and cheap when everything is already up. When it
+isn't, it rediscovers the current Windows-side port from the `chromedebug`
+scheduled task (the source of truth — the port moves, see "Port gotcha";
+**never hardcode it**), relaunches Chrome via the task if the process is dead
+(a visible window on Iliyas's screen — say so), and rebuilds both SSH hops
+(dev-remote → wsl → windows) onto local port 18800.
+
+A systemd timer on dev-remote re-runs it every 2 minutes, so the endpoint is
+normally already alive: `systemctl status cdp-tunnel.timer`, logs in
+`journalctl -u cdp-tunnel.service`.
+
+If `connect.sh` prints `FAIL`, its message names the layer that broke; the
+sections below are the manual troubleshooting path. As of 2026-09-01 the
+Windows-side port is **9555** (9222, 9223, 9250, 9333 and 9444 got
+WinNAT-blocked in turn).
+
+### Manual path (what connect.sh automates)
+
+The debug port lives only on the Windows host's own loopback. The home
+machine (the WSL box `iliyasone`) and `dev-remote` are both on Iliyas's
+**Tailscale** tailnet, the stable path between them. Reaching the port is a
+two-hop tunnel — the WSL box cannot see the Windows loopback directly, so it
+must tunnel to the host too. Discover the port first:
 
 ```bash
 PORT=$(ssh wsl 'ssh windows "schtasks /query /tn chromedebug /xml"' \
         | grep -aoE 'remote-debugging-port=[0-9]+' | grep -oE '[0-9]+')
-export CDP_HTTP="http://127.0.0.1:$PORT"   # cdp.py and every check below read this
 ```
-
-As of 2026-08-27 the port is **9444** (9222, 9223, 9250 and 9333 got
-WinNAT-blocked in turn). Everything below uses `$PORT` / `$CDP_HTTP`;
-substitute the discovered value.
-
-## Step 0 — preflight: is there a path to the browser?
-
-The debug port lives only on the Windows host's own `127.0.0.1:$PORT`. The home
-machine (the WSL box `iliyasone`) and `dev-remote` are both on Iliyas's
-**Tailscale** tailnet, the stable path between them. Reaching the port is a
-two-hop tunnel — the WSL box cannot see the Windows loopback directly, so it
-must tunnel to the host too:
 
 - **On the WSL box `iliyasone`**: bring the host port onto WSL's loopback:
 
@@ -76,7 +91,7 @@ must tunnel to the host too:
 Then run the check:
 
 ```bash
-curl -s --max-time 4 "$CDP_HTTP/json/version" || echo NO_CDP
+curl -s --max-time 4 "http://127.0.0.1:$PORT/json/version" || echo NO_CDP
 ```
 
 A Chrome version → go to Step 1. `NO_CDP` → causes, cheapest first: a tunnel
@@ -107,7 +122,8 @@ Chrome carries the **Proxy Switcher** extension
 setting. `cdp.py` (next to this file) drives it, hiding a second gotcha: the
 extension is MV3, its service worker sleeps and drops out of `/json`;
 `cdp.py` wakes it by opening the extension popup as a target, then attaches.
-It reads the endpoint from `$CDP_HTTP` (export it as shown above).
+It defaults to the fixed endpoint `http://127.0.0.1:18800` (run `connect.sh`
+first); `$CDP_HTTP` overrides that only when running somewhere else.
 
 ```bash
 python3 cdp.py get                  # current browser-wide proxy setting
@@ -160,6 +176,23 @@ logged on"), so it launches into his visible session and stores no password.
 
 If the relaunch works but Chrome is dead again minutes later, don't keep
 relaunching — see "Death gotcha".
+
+### Iliyas can open it himself — the desktop shortcut
+
+**"Agent Chrome"** on the Windows desktop opens this browser by hand — e.g.
+to sign in to a service so agents can then use the session. It runs
+`C:\chrome-debug\open-debug-chrome.ps1`: if the debug Chrome is already
+running it opens a new window in it; otherwise it starts the `chromedebug`
+task (a plain `schtasks /run` would be silently ignored while the task
+instance is still running, because the task uses `MultipleInstances
+IgnoreNew` — that's why the script checks first). So when he needs to log in
+somewhere, point him at the shortcut instead of opening tabs for him.
+
+If the shortcut or opener script is missing, recreate both by running
+`mk-shortcut.ps1` (next to this file) on the host via the `-EncodedCommand`
+transport. It builds the `.lnk` in `C:\chrome-debug` and moves it to the
+desktop — `WScript.Shell` fails to save directly into the desktop folder
+because its name is Cyrillic (`Рабочий стол`).
 
 ## Port gotcha — WinNAT can steal the debug port
 
@@ -296,14 +329,15 @@ Both machines are nodes on Iliyas's Tailscale tailnet:
   so `ssh wsl` works over the tailnet.
 
 Tailnet addresses survive home-IP changes, so nothing needs reconfiguring
-when Iliyas's network moves. When Step 0 says `NO_CDP`:
+when Iliyas's network moves. When `connect.sh` fails (or a manual check says
+`NO_CDP`):
 
 - **Far end offline** (PC asleep / WSL not up): `tailscale status` shows
   `iliyasone` offline. Nothing to fix from dev-remote.
 - **Chrome not running** but `ssh wsl` works: see "Launching".
 - **Port stolen by WinNAT**: see "Port gotcha".
 - **Chrome dies again right after relaunch**: see "Death gotcha".
-- **Tunnel not up**: re-run the forwards from Step 0.
+- **Tunnel not up**: re-run `connect.sh` (it rebuilds both hops).
 - **MTU blackhole on the tailnet path** (seen 2026-08-15): `ping` works but
   `ssh wsl` hangs at `expecting SSH2_MSG_KEX_ECDH_REPLY`, or small CDP calls
   (`/json/version`) work while big ones (`/json/list`) return nothing — large
@@ -313,8 +347,8 @@ when Iliyas's network moves. When Step 0 says `NO_CDP`:
   default post-quantum sntrup761 KEX sends oversized packets), and lower the
   interface MTU on dev-remote: `ip link set dev tailscale0 mtu 1200` (default
   1280 exceeds the real path MTU). The MTU setting does **not** survive a
-  dev-remote reboot — `ip link show tailscale0` first whenever big transfers
-  stall, and re-apply. Tunnels opened before the MTU fix keep their broken
+  dev-remote reboot, but `connect.sh` re-applies it on every non-fast-path
+  run; check `ip link show tailscale0` if big transfers stall anyway. Tunnels opened before the MTU fix keep their broken
   MSS — restart them after changing the MTU.
 
 Only one home node is on the tailnet today (`iliyasone`). If Iliyas later

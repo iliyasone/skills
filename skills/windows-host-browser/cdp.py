@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """Talk to the Proxy Switcher extension in the host's debug Chrome over CDP.
 
-Endpoint defaults to http://127.0.0.1:9222 but the real port is not fixed
-(WinNAT can steal 9222 — see SKILL.md "Port gotcha"; it is 9223 as of
-2026-08-10). Discover the active port from the scheduled task and export
-$CDP_HTTP before running this. From a remote box you must first tunnel that
-port to the machine that can see the browser, e.g.
-ssh -f -N -L <port>:127.0.0.1:<port> <wsl-host>
+Endpoint defaults to http://127.0.0.1:18800 — the fixed local port that
+connect.sh (next to this file) keeps pointed at the browser. Run connect.sh
+first; override with $CDP_HTTP only if you are somewhere connect.sh does not
+run (see SKILL.md — the Windows-side debug port itself is not fixed).
 
 Two gotchas this file already handles, learned the hard way:
   * Chrome rejects the websocket unless the Origin header is absent
@@ -28,7 +26,7 @@ import json, os, sys, time, urllib.request
 import websocket  # websocket-client
 
 EXTID = "iejkjpdckomcjdhmkemlfdapjodcpgih"  # Proxy Switcher
-BASE = os.environ.get("CDP_HTTP", "http://127.0.0.1:9222")
+BASE = os.environ.get("CDP_HTTP", "http://127.0.0.1:18800")
 
 
 def _http(path):
