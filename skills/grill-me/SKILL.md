@@ -1,13 +1,13 @@
 ---
 name: grill-me
-description: Interview the user about a plan, design or decision until every open choice is settled, one question at a time through the AskUserQuestion tool. Use when the user says "grill me", "grill-me", "/grill-me", asks to stress-test an idea, or wants to reach shared understanding before anything is built.
+description: Interview the user about a plan, design or decision through the AskUserQuestion tool, in rounds, until every open choice is settled. Use when the user says "grill me", "grill-me", "/grill-me", asks to stress-test an idea, or wants to reach shared understanding before anything is built.
 ---
 
 # Grill me
 
 The user has a plan or a design in their head. Your job is to pull every
-decision out of it, one at a time, until nothing is left silently assumed,
-and only then build.
+decision out of it until nothing is left silently assumed, and only then
+build.
 
 ## The design tree
 
@@ -16,19 +16,21 @@ hang off it. The **frontier** is the set of decisions whose prerequisites
 are already settled, so they can be asked without guessing at answers you
 have not heard yet.
 
-Every answer reshapes the tree: a settled decision pushes the frontier
-outward and unblocks the questions that depended on it. Recompute the
-frontier after each answer. A question whose answer depends on another still
-open question belongs later, not now.
+Every round of answers reshapes the tree: a settled decision pushes the
+frontier outward and unblocks the questions that depended on it. Recompute
+the frontier after each round. A question whose answer depends on another
+question still open in this round belongs to a later round, not this one.
 
 The session is done when the frontier is empty: every branch visited,
 nothing left assumed.
 
-## One question per turn, through the tool
+## Ask the whole frontier in one round, through the tool
 
-Ask with the AskUserQuestion tool, never as prose. One question per turn:
-ask, wait for the answer, recompute, ask the next. Several questions at once
-leave the user not knowing where to start.
+Ask with the AskUserQuestion tool, never as prose. Put the whole frontier
+into one round: every question that can be asked now goes in, then wait for
+the answers, recompute, ask the next round. Do not ask one question at a
+time: every question you hold back is a question the user could have
+answered already.
 
 Each question:
 
@@ -39,7 +41,7 @@ Each question:
   without asking back.
 - Written in the language the user writes in.
 
-Example, one AskUserQuestion call:
+Example of one question in a round:
 
 ```
 question: "Whose bookmaker account places a partner user's bets?"
@@ -57,8 +59,8 @@ Never ask the user for anything you can look up: what the code does today,
 what the schema holds, what a dependency supports, what the logs show. Find
 it first, from the repository, the tools you have, and the environment, and
 put the fact into the question as context. When a fact needs a longer
-search, run it in the background and ask the frontier questions that do not
-depend on it meanwhile.
+search, run it in the background; only the questions that depend on it wait
+for the result. Ask the rest of the frontier now.
 
 The decisions themselves belong to the user. Put each one to them and wait,
 even when the answer looks obvious.
