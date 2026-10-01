@@ -43,7 +43,7 @@ The script is idempotent and cheap when everything is already up. When it
 isn't, it rediscovers the current Windows-side port from the `chromedebug`
 scheduled task (the source of truth — the port moves, see "Port gotcha";
 **never hardcode it**), relaunches Chrome via the task if the process is dead
-(a visible window on Iliyas's screen — say so), and rebuilds both SSH hops
+(windowless — see "Launching"), and rebuilds both SSH hops
 (dev-remote → wsl → windows) onto local port 18800.
 
 A systemd timer on dev-remote re-runs it every 2 minutes, so the endpoint is
@@ -207,7 +207,12 @@ ssh wsl 'ssh windows "schtasks /run /tn chromedebug"'
 # then poll: curl -s "$CDP_HTTP/json/version"
 ```
 
-This opens a visible window on Iliyas's screen — say so when you do it. The
+The task starts Chrome with `--no-startup-window`, so a launch is invisible:
+Chrome runs in the background with CDP up and no window until something opens
+a page (`PUT /json/new` then creates a window on his screen — say so). This is
+what keeps the 2-minute timer from popping Chrome in front of Iliyas after
+every logon; keep the flag whenever the task action is rewritten. The
+"Agent Chrome" shortcut opens the window itself after starting the task. The
 task runs as `LogonType=InteractiveToken` (General tab: "Run only when user is
 logged on"), so it launches into his visible session and stores no password.
 
@@ -220,9 +225,10 @@ relaunching — see "Death gotcha".
 to sign in to a service so agents can then use the session. It runs
 `C:\chrome-debug\open-debug-chrome.ps1`: if the debug Chrome is already
 running it opens a new window in it; otherwise it starts the `chromedebug`
-task (a plain `schtasks /run` would be silently ignored while the task
-instance is still running, because the task uses `MultipleInstances
-IgnoreNew` — that's why the script checks first). So when he needs to log in
+task, waits for the debug port to answer, and then opens the window (a
+plain `schtasks /run` would be silently ignored while the task instance is
+still running, because the task uses `MultipleInstances IgnoreNew` — that's
+why the script checks first). So when he needs to log in
 somewhere, point him at the shortcut instead of opening tabs for him.
 
 If the shortcut or opener script is missing, recreate both by running
@@ -262,7 +268,7 @@ session 0 are red herrings here — confirm with the log line above.
 
    ```powershell
    $a = New-ScheduledTaskAction -Execute 'C:\Program Files\Google\Chrome\Application\chrome.exe' `
-        -Argument '--remote-debugging-port=<PORT> --user-data-dir=C:\chrome-debug'
+        -Argument '--remote-debugging-port=<PORT> --user-data-dir=C:\chrome-debug --no-startup-window'
    Set-ScheduledTask -TaskName 'chromedebug' -Action $a
    ```
 
