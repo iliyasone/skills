@@ -29,21 +29,34 @@ Two consequences drive everything below:
   done. For data you could equally get via an authed CLI or a headless
   browser, prefer those.
 
-### When to use it without being asked
+## When to use it without being asked
 
 Iliyas would rather you use this browser than stop and wait for him. Use it
 on your own when the cheaper routes failed:
 
 - a headless browser is stopped by a Cloudflare challenge or a captcha;
 - the page needs one of his logins and no CLI or token covers it;
-- you need to see a page exactly as he sees it to debug it.
+- something only happens in his browser or session, and headless can't
+  reproduce it.
 
-Reading and navigating in a tab you opened is fine without asking. Write in
-the chat which page you opened and why. Ask first before anything that acts
-under his name or costs money: submitting forms, posting, buying, changing
-account settings, or changing the browser's proxy. Another agent may be using
-the browser at the same time: work in your own tab and never close or
-navigate tabs you didn't open.
+Unasked, you may read and navigate pages the task needs, in a tab you opened
+yourself. Write in the chat which page you opened and why. A Cloudflare
+challenge usually clears by itself in this browser; ticking the Turnstile
+checkbox is fine; any other captcha, ask him to solve it in the open tab.
+
+Ask first before anything that changes state on any of his accounts or costs
+money: submitting forms, posting, buying, account settings, link clicks that
+confirm, accept, authorize or log out, OAuth consent, and any non-GET request
+you send from page JS. Also ask before copying cookies or tokens out of the
+browser (except `cf_clearance` for the same site) and before changing the
+proxy of any profile.
+
+If `connect.sh` fails while you are acting unasked, stop and tell him. The
+repairs below (killing Chrome, rewriting the `chromedebug` task, `net stop
+winnat`) close his windows and other agents' tabs; they need his OK.
+
+Another agent may be using the browser at the same time: work in your own
+tab and never close or navigate tabs you didn't open.
 
 ## Step 0 — connect: run `connect.sh`, use the fixed endpoint
 
@@ -138,8 +151,10 @@ Every window and tab is on Iliyas's screen, and he has asked agents to stop
 spawning new windows. Before opening anything, `GET /json/list` and reuse
 what's there, in this order:
 
-1. **A blank tab exists** (`about:blank` or `chrome://newtab/`): navigate it
-   (attach to its websocket, `Page.navigate`) instead of creating a target.
+1. **A blank tab you opened yourself, or one Iliyas left blank, exists**
+   (`about:blank` or `chrome://newtab/`): navigate it (attach to its
+   websocket, `Page.navigate`) instead of creating a target. A fresh blank
+   tab may be another agent's, about to navigate.
 2. **The open tabs are your own or clearly idle** (not something Iliyas is
    actively working in): open your page as a tab in that same window —
    `PUT /json/new` does this, it targets an existing window.
@@ -151,6 +166,9 @@ Same on cleanup: `/json/close/<id>` the tabs you opened; never close tabs
 you didn't open.
 
 ## Proxy control — `cdp.py` (per profile)
+
+Ask Iliyas before `set` or `direct` on any profile, unless he asked for the
+proxy change.
 
 Chrome carries the **Proxy Switcher** extension
 (`iejkjpdckomcjdhmkemlfdapjodcpgih`), which owns the proxy setting. The proxy
