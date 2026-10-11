@@ -39,8 +39,12 @@ on your own when the cheaper routes failed:
 - something only happens in his browser or session, and headless can't
   reproduce it.
 
-Unasked, you may read and navigate pages the task needs, in a tab you opened
-yourself. Write in the chat which page you opened and why. A Cloudflare
+Unasked, you may read and navigate a handful of pages the task needs, at
+human pace, in a tab you opened yourself (a blank tab of his you took over
+under "Reuse existing windows" counts as yours, to navigate and to close).
+Loops, polling and bulk fetching through his browser need his OK: they run
+on his home IP and his accounts, and a flagged IP or account is his
+problem. Write in the chat which page you opened and why. A Cloudflare
 challenge usually clears by itself in this browser; ticking the Turnstile
 checkbox is fine; any other captcha, ask him to solve it in the open tab.
 
@@ -48,8 +52,10 @@ Ask first before anything that changes state on any of his accounts or costs
 money: submitting forms, posting, buying, account settings, link clicks that
 confirm, accept, authorize or log out, OAuth consent, and any non-GET request
 you send from page JS. Also ask before copying cookies or tokens out of the
-browser (except `cf_clearance` for the same site) and before changing the
-proxy of any profile.
+browser, and before pasting any secret or private data a page shows (API
+keys, env vars, messages) into the chat, an issue or a PR. Ask before
+changing the proxy of any profile. These rules hold also when he asked you
+to use the browser, unless his request names the action.
 
 If `connect.sh` fails while you are acting unasked, stop and tell him. The
 repairs below (killing Chrome, rewriting the `chromedebug` task, `net stop
