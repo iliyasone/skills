@@ -40,14 +40,18 @@ on your own when the cheaper routes failed:
   reproduce it.
 
 Unasked, open your page as a background tab, so his active tab keeps the
-focus: `Target.createTarget` with `background: true` on the browser websocket,
-not `PUT /json/new`. Bring it forward only when he has to act on it (a
-captcha). You may read and navigate a handful of pages the task needs, at
-human pace, in a tab you opened yourself (a blank tab of his you took over
-under "Reuse existing windows" counts as yours, to navigate and to close).
-Write in the chat which page you opened and why. A Cloudflare challenge
-usually clears by itself in this browser; ticking the Turnstile checkbox is
-fine; any other captcha, ask him to solve it in the open tab.
+focus: `Target.createTarget` with `background: true` on the browser websocket
+(`GET /json/version` → `webSocketDebuggerUrl`; connect without an Origin
+header, as cdp.py does), not `PUT /json/new`. Bring it forward with
+`Target.activateTarget` only when he has to act on it (a captcha). If Chrome
+has no window open, a new window appears anyway; say so. The tab lands in the
+default profile: if the login you need lives in another profile, ask him. You
+may read and navigate a handful of pages the task needs, at human pace, in a
+tab you opened yourself (a blank tab of his you took over under "Reuse
+existing windows" counts as yours, to navigate and to close). Write in the
+chat which page you opened and why. A Cloudflare challenge usually clears by
+itself in this browser; ticking the Turnstile checkbox is fine; any other
+captcha, ask him to solve it in the open tab.
 
 Ask first before anything that changes state on any of his accounts or costs
 money: submitting forms, posting, buying, account settings, link clicks that
@@ -66,7 +70,8 @@ repairs below (killing Chrome, rewriting the `chromedebug` task, `net stop
 winnat`) close his windows and other agents' tabs; they need his OK.
 
 Another agent may be using the browser at the same time: work in your own
-tab and never close or navigate tabs you didn't open.
+tab and never close or navigate tabs that aren't yours (see the blank-tab
+rule below).
 
 ## Step 0 — connect: run `connect.sh`, use the fixed endpoint
 
@@ -154,6 +159,8 @@ From there it is plain CDP against `$CDP_HTTP`:
   (`Network.enable` + `Network.requestWillBeSent` / `responseReceived`).
 - `PUT /json/new?url=…` — open a page (a visible tab on Iliyas's screen —
   say so when you do it).
+- `GET /json/version` → `webSocketDebuggerUrl` — the browser websocket, for
+  `Target.*` calls such as `createTarget`.
 
 ### Reuse existing windows — don't multiply them
 
