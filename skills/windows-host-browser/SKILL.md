@@ -41,10 +41,7 @@ on your own when the cheaper routes failed:
 
 Unasked, you may read and navigate a handful of pages the task needs, at
 human pace, in a tab you opened yourself (a blank tab of his you took over
-under "Reuse existing windows" counts as yours, to navigate and to close).
-Loops, polling and bulk fetching through his browser need his OK: they run
-on his home IP and his accounts, and a flagged IP or account is his
-problem. Write in the chat which page you opened and why. A Cloudflare
+under "Reuse existing windows" counts as yours, to navigate and to close). Write in the chat which page you opened and why. A Cloudflare
 challenge usually clears by itself in this browser; ticking the Turnstile
 checkbox is fine; any other captcha, ask him to solve it in the open tab.
 
@@ -52,8 +49,11 @@ Ask first before anything that changes state on any of his accounts or costs
 money: submitting forms, posting, buying, account settings, link clicks that
 confirm, accept, authorize or log out, OAuth consent, and any non-GET request
 you send from page JS. Also ask before copying cookies or tokens out of the
-browser, and before pasting any secret or private data a page shows (API
-keys, env vars, messages) into the chat, an issue or a PR. Ask before
+browser, and before pasting credentials a page shows (API keys, tokens,
+passwords, env var values) anywhere, the chat included. Other private
+content may go to him in the chat, not into issues, PRs or other people's
+chats. Loops, polling and bulk fetching through his browser need his OK:
+they run on his home IP and his accounts. Ask before
 changing the proxy of any profile. These rules hold also when he asked you
 to use the browser, unless his request names the action.
 
@@ -160,7 +160,8 @@ what's there, in this order:
 1. **A blank tab you opened yourself, or one Iliyas left blank, exists**
    (`about:blank` or `chrome://newtab/`): navigate it (attach to its
    websocket, `Page.navigate`) instead of creating a target. A fresh blank
-   tab may be another agent's, about to navigate.
+   tab may be another agent's, about to navigate; if you can't tell, treat
+   it as not yours and go to rule 2.
 2. **The open tabs are your own or clearly idle** (not something Iliyas is
    actively working in): open your page as a tab in that same window —
    `PUT /json/new` does this, it targets an existing window.
