@@ -5,8 +5,10 @@ description: >-
   uses himself, signed in to his accounts (Vercel, Google Cloud, Heroku, and
   others). Use it to fetch data that sits behind his logins, open and debug a
   page live, watch a flow together, intercept requests, or set the browser's
-  proxy / exit country. Use it only when Iliyas explicitly asks for his real /
-  host / Windows browser — everything it does is visible on his screen.
+  proxy / exit country. Use it when Iliyas asks for his real / host / Windows
+  browser, or on your own when a headless browser or CLI can't do the job
+  (Cloudflare challenge, captcha, a page behind his login) — everything it
+  does is visible on his screen, so say what you opened.
 ---
 
 # Windows host browser
@@ -22,11 +24,54 @@ Two consequences drive everything below:
   credentials, and a page can be debugged exactly as he sees it: open tabs,
   run JS in them, watch network traffic, route through a chosen proxy.
 - **Restraint** — he sees every window you open and shares every setting you
-  change. Use this browser only on his explicit request; when he names the
-  browser in the request, that settles it. Tell him when you open something
-  visible, close tabs you opened unless he wants them kept, and undo
-  browser-wide changes (proxy!) when done. For data you could equally get by
-  asking him or via an authed CLI, prefer that.
+  change. Tell him when you open something visible, close tabs you opened
+  unless he wants them kept, and undo browser-wide changes (proxy!) when
+  done. For data you could equally get via an authed CLI or a headless
+  browser, prefer those.
+
+## When to use it without being asked
+
+Iliyas would rather you use this browser than stop and wait for him. Use it
+on your own when the cheaper routes failed:
+
+- a headless browser is stopped by a Cloudflare challenge or a captcha;
+- the page needs one of his logins and no CLI or token covers it;
+- something only happens in his browser or session, and headless can't
+  reproduce it.
+
+Unasked, open your page as a background tab, so his active tab keeps the
+focus: `Target.createTarget` with `background: true` on the browser websocket
+(`GET /json/version` → `webSocketDebuggerUrl`; connect without an Origin
+header, as cdp.py does), not `PUT /json/new`. Bring it forward with
+`Target.activateTarget` only when he has to act on it (a captcha). If Chrome
+has no window open, a new window appears anyway; say so. The tab lands in the
+default profile: if the login you need lives in another profile, ask him. You
+may read and navigate a handful of pages the task needs, at human pace, in a
+tab you opened yourself (a blank tab of his you took over under "Reuse
+existing windows" counts as yours, to navigate and to close). Write in the
+chat which page you opened and why. A Cloudflare challenge usually clears by
+itself in this browser; ticking the Turnstile checkbox is fine; any other
+captcha, ask him to solve it in the open tab.
+
+Ask first before anything that changes state on any of his accounts or costs
+money: submitting forms, posting, buying, account settings, link clicks that
+confirm, accept, authorize or log out, OAuth consent, and any non-GET request
+you send from page JS. Also ask before copying cookies or tokens out of the
+browser, and before pasting credentials a page shows (API keys, tokens,
+passwords, env var values) anywhere, the chat included. Other private
+content may go to him in the chat, not into issues, PRs or other people's
+chats. Loops, polling and bulk fetching through his browser need his OK:
+they run on his home IP and his accounts. Ask before
+changing the proxy of any profile. These rules hold also when he asked you
+to use the browser, unless his request names the action.
+
+If `connect.sh` fails while you are acting unasked, stop and tell him. The
+repairs below (killing Chrome, rewriting the `chromedebug` task, `net stop
+winnat`) close his windows and other agents' tabs; they need his OK.
+
+Another agent may be using the browser at the same time: work in your own
+tab and never close or navigate tabs that aren't yours (see the blank-tab
+rule below).
 
 ## Step 0 — connect: run `connect.sh`, use the fixed endpoint
 
@@ -114,6 +159,8 @@ From there it is plain CDP against `$CDP_HTTP`:
   (`Network.enable` + `Network.requestWillBeSent` / `responseReceived`).
 - `PUT /json/new?url=…` — open a page (a visible tab on Iliyas's screen —
   say so when you do it).
+- `GET /json/version` → `webSocketDebuggerUrl` — the browser websocket, for
+  `Target.*` calls such as `createTarget`.
 
 ### Reuse existing windows — don't multiply them
 
@@ -121,8 +168,11 @@ Every window and tab is on Iliyas's screen, and he has asked agents to stop
 spawning new windows. Before opening anything, `GET /json/list` and reuse
 what's there, in this order:
 
-1. **A blank tab exists** (`about:blank` or `chrome://newtab/`): navigate it
-   (attach to its websocket, `Page.navigate`) instead of creating a target.
+1. **A blank tab you opened yourself, or one Iliyas left blank, exists**
+   (`about:blank` or `chrome://newtab/`): navigate it (attach to its
+   websocket, `Page.navigate`) instead of creating a target. A fresh blank
+   tab may be another agent's, about to navigate; if you can't tell, treat
+   it as not yours and go to rule 2.
 2. **The open tabs are your own or clearly idle** (not something Iliyas is
    actively working in): open your page as a tab in that same window —
    `PUT /json/new` does this, it targets an existing window.
@@ -134,6 +184,10 @@ Same on cleanup: `/json/close/<id>` the tabs you opened; never close tabs
 you didn't open.
 
 ## Proxy control — `cdp.py` (per profile)
+
+Ask Iliyas before `set` or `direct` on any profile, unless he asked for the
+proxy change. Reverting your own approved `set` with `direct` needs no
+second ask; a proxy you found already set is his to decide.
 
 Chrome carries the **Proxy Switcher** extension
 (`iejkjpdckomcjdhmkemlfdapjodcpgih`), which owns the proxy setting. The proxy
