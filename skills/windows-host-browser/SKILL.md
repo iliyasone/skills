@@ -39,11 +39,15 @@ on your own when the cheaper routes failed:
 - something only happens in his browser or session, and headless can't
   reproduce it.
 
-Unasked, you may read and navigate a handful of pages the task needs, at
+Unasked, open your page as a background tab, so his active tab keeps the
+focus: `Target.createTarget` with `background: true` on the browser websocket,
+not `PUT /json/new`. Bring it forward only when he has to act on it (a
+captcha). You may read and navigate a handful of pages the task needs, at
 human pace, in a tab you opened yourself (a blank tab of his you took over
-under "Reuse existing windows" counts as yours, to navigate and to close). Write in the chat which page you opened and why. A Cloudflare
-challenge usually clears by itself in this browser; ticking the Turnstile
-checkbox is fine; any other captcha, ask him to solve it in the open tab.
+under "Reuse existing windows" counts as yours, to navigate and to close).
+Write in the chat which page you opened and why. A Cloudflare challenge
+usually clears by itself in this browser; ticking the Turnstile checkbox is
+fine; any other captcha, ask him to solve it in the open tab.
 
 Ask first before anything that changes state on any of his accounts or costs
 money: submitting forms, posting, buying, account settings, link clicks that
@@ -175,7 +179,8 @@ you didn't open.
 ## Proxy control — `cdp.py` (per profile)
 
 Ask Iliyas before `set` or `direct` on any profile, unless he asked for the
-proxy change.
+proxy change. Reverting your own approved `set` with `direct` needs no
+second ask; a proxy you found already set is his to decide.
 
 Chrome carries the **Proxy Switcher** extension
 (`iejkjpdckomcjdhmkemlfdapjodcpgih`), which owns the proxy setting. The proxy
