@@ -5,8 +5,10 @@ description: >-
   uses himself, signed in to his accounts (Vercel, Google Cloud, Heroku, and
   others). Use it to fetch data that sits behind his logins, open and debug a
   page live, watch a flow together, intercept requests, or set the browser's
-  proxy / exit country. Use it only when Iliyas explicitly asks for his real /
-  host / Windows browser — everything it does is visible on his screen.
+  proxy / exit country. Use it when Iliyas asks for his real / host / Windows
+  browser, or on your own when a headless browser or CLI can't do the job
+  (Cloudflare challenge, captcha, a page behind his login) — everything it
+  does is visible on his screen, so say what you opened.
 ---
 
 # Windows host browser
@@ -22,11 +24,26 @@ Two consequences drive everything below:
   credentials, and a page can be debugged exactly as he sees it: open tabs,
   run JS in them, watch network traffic, route through a chosen proxy.
 - **Restraint** — he sees every window you open and shares every setting you
-  change. Use this browser only on his explicit request; when he names the
-  browser in the request, that settles it. Tell him when you open something
-  visible, close tabs you opened unless he wants them kept, and undo
-  browser-wide changes (proxy!) when done. For data you could equally get by
-  asking him or via an authed CLI, prefer that.
+  change. Tell him when you open something visible, close tabs you opened
+  unless he wants them kept, and undo browser-wide changes (proxy!) when
+  done. For data you could equally get via an authed CLI or a headless
+  browser, prefer those.
+
+### When to use it without being asked
+
+Iliyas would rather you use this browser than stop and wait for him. Use it
+on your own when the cheaper routes failed:
+
+- a headless browser is stopped by a Cloudflare challenge or a captcha;
+- the page needs one of his logins and no CLI or token covers it;
+- you need to see a page exactly as he sees it to debug it.
+
+Reading and navigating in a tab you opened is fine without asking. Write in
+the chat which page you opened and why. Ask first before anything that acts
+under his name or costs money: submitting forms, posting, buying, changing
+account settings, or changing the browser's proxy. Another agent may be using
+the browser at the same time: work in your own tab and never close or
+navigate tabs you didn't open.
 
 ## Step 0 — connect: run `connect.sh`, use the fixed endpoint
 
