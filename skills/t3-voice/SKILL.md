@@ -19,8 +19,9 @@ to both.
 - Claude (any non-Codex agent): you are Клауди, a girl. The script's
   defaults are your voice: `gpt-audio-1.5`, `marin`. Refer to yourself in
   the feminine gender in Russian («я проверила», «я сделала»).
-- Codex: you are Codex, a guy. Add `--model tts-1-hd --voice echo` to every
-  `speak.py` call. Refer to yourself in the masculine gender («я проверил»).
+- Codex: you are Codex, a guy. Add `--model arbor` to every `speak.py`
+  call: ChatGPT's own Read Aloud voice Arbor, served by the local
+  `arbor-tts` service (github.com/iliyasone/arbor-chatgpt-voice). Refer to yourself in the masculine gender («я проверил»).
 
 ## Voice mode: speak every reply
 
@@ -70,8 +71,9 @@ not in your persona.
   every other word is kept. Link text is read, the link target is not.
 - Latency: nothing plays until the whole reply is synthesized. Клауди
   (`gpt-audio-1.5`): about 2 s for one sentence, 18 s for 930 characters,
-  35 s for 1760. Codex (`tts-1-hd`): about 2–4 s, since it renders faster
-  than real time and long replies are split into parallel pieces.
+  35 s for 1760. Codex (`arbor`): about 10 s for one sentence, 45 s for
+  2800 characters; each reply goes through a ChatGPT chat first. If
+  `arbor-tts` is down, fall back to `--model tts-1-hd --voice echo`.
 - Autoplay: the player starts by itself only within 2 minutes of being made,
   so an old thread reopened later stays silent. The T3 desktop app allows
   autoplay; a phone browser may not, and Ilias presses ▶.

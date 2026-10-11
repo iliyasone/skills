@@ -3,7 +3,7 @@
 
 Reads the reply text from stdin (or, with --last, the previous reply from this
 Claude Code session's transcript), reads it aloud with OpenAI (gpt-audio-1.5 by default,
-or a tts-1 model), and prints a small HTML player to stdout for the html_render tool.
+a tts-1 model, or ChatGPT's Arbor voice via the local arbor-tts service), and prints a small HTML player to stdout for the html_render tool.
 
 The audio is stored as an MP3 behind an 8-byte PNG signature with a .png name:
 html_render only inlines local files that look like images, and the player
@@ -26,6 +26,7 @@ import uuid
 ENV_FILE = os.path.expanduser("~/.config/openai-voice/env")
 OUT_DIR = os.path.expanduser("~/.cache/t3-voice")
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+ARBOR_URL = os.environ.get("ARBOR_TTS_URL", "http://127.0.0.1:8811/v1/audio/speech")
 TTS_MAX_CHARS = 4000  # /v1/audio/speech accepts at most 4096 characters
 READER_PROMPT = (
     "You are a voice actor. Read the user's text aloud exactly as written, word for word, "
@@ -155,7 +156,21 @@ def tts_pieces(text):
     return pieces + [current] if current else pieces
 
 
+def arbor(text):
+    """ChatGPT Read Aloud voice Arbor from arbor-tts (github.com/iliyasone/arbor-chatgpt-voice)."""
+    request = urllib.request.Request(
+        ARBOR_URL, json.dumps({"input": text, "voice": "arbor"}).encode(), {"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response:
+            return response.read()
+    except (urllib.error.URLError, TimeoutError) as error:
+        raise SystemExit(f"arbor-tts failed: {error}")
+
+
 def synthesize(key, text, model, voice):
+    if model == "arbor":
+        return arbor(text)
     if model.startswith("tts-"):
         body = lambda piece: {"model": model, "voice": voice, "input": piece, "response_format": "mp3"}
         pieces = tts_pieces(text)
@@ -184,7 +199,7 @@ PLAYER = (
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--last", action="store_true", help="speak the previous reply of this session")
-    parser.add_argument("--model", default="gpt-audio-1.5", help="gpt-audio-* or tts-1* (default: gpt-audio-1.5)")
+    parser.add_argument("--model", default="gpt-audio-1.5", help="gpt-audio-*, tts-1* or arbor (default: gpt-audio-1.5)")
     parser.add_argument("--voice", default="marin", help="OpenAI voice (default: marin)")
     args = parser.parse_args()
 
@@ -192,7 +207,7 @@ def main():
     text = speakable(last_reply() if args.last else sys.stdin.read())
     if not text:
         sys.exit("nothing to speak")
-    audio = synthesize(api_key(), text, args.model, args.voice)
+    audio = synthesize(None if args.model == "arbor" else api_key(), text, args.model, args.voice)
 
     os.makedirs(OUT_DIR, exist_ok=True)
     for old in glob.glob(f"{OUT_DIR}/*.png"):
@@ -204,7 +219,7 @@ def main():
 
     print(PLAYER.replace("__PATH__", path).replace("__MADE__", str(int(time.time() * 1000))))
     print(
-        f"t3-voice: {args.model}/{args.voice}, {len(text)} chars, {len(audio) // 1024} KiB, "
+        f"t3-voice: {args.model if args.model == 'arbor' else args.model + '/' + args.voice}, {len(text)} chars, {len(audio) // 1024} KiB, "
         f"synthesized in {time.time() - started:.1f}s",
         file=sys.stderr,
     )
