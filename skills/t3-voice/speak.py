@@ -192,6 +192,10 @@ PLAYER = (
     '<audio id=a controls style="width:100%;height:40px"></audio><script>'
     'const S="__PATH__",b=atob(S.slice(S.indexOf(",")+1));'
     'a.src=URL.createObjectURL(new Blob([Uint8Array.from(b,c=>c.charCodeAt(0)).slice(8)],{type:"audio/mpeg"}));'
+    # Media keys and a "play/pause" gesture reach the reply through the app's media session; at the end it
+    # rewinds and stays paused, so the session (and the gesture) survives to play it again.
+    'const M=navigator.mediaSession;if(M){M.setActionHandler("play",()=>a.play());M.setActionHandler("pause",()=>a.pause());'
+    'M.setActionHandler("stop",()=>{a.pause();a.currentTime=0})}a.onended=()=>{a.currentTime=0;a.pause()};'
     'Date.now()-__MADE__<12e4&&a.play().catch(()=>{})</script>'
 )
 
