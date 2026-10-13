@@ -54,7 +54,10 @@ says nothing about voice. Ilias dictates, so the name may come out as
    `title` = `🔊`, `height` = `80`. Skip `html_preview`.
 4. Send the text from step 2 as your final reply, character for character.
 
-If the script fails, send the reply as text anyway and add one line saying
+When OpenAI fails (no credits, outage), the script falls back to the free
+Google Translate voice by itself and says so on stderr: the player still
+comes out, use it as usual. `--model google` picks that voice directly. If
+the script fails anyway, send the reply as text and add one line saying
 what failed.
 
 ## Speak the previous reply
