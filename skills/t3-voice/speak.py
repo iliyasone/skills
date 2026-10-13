@@ -31,7 +31,7 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 ARBOR_URL = os.environ.get("ARBOR_TTS_URL", "http://127.0.0.1:8811/v1/audio/speech")
 GOOGLE_TTS_URL = "https://translate.google.com/translate_tts"
 GOOGLE_MAX_CHARS = 190  # translate_tts rejects requests over ~200 characters
-GOOGLE_TEMPO = 0.85  # Google's voice reads fast; ffmpeg slows it down (translate_tts ignores ttsspeed)
+GOOGLE_TEMPO = 1.25  # Ilias listens to the Google voice sped up; ffmpeg applies it (translate_tts ignores ttsspeed)
 TTS_MAX_CHARS = 4000  # /v1/audio/speech accepts at most 4096 characters
 READER_PROMPT = (
     "You are a voice actor. Read the user's text aloud exactly as written, word for word, "
