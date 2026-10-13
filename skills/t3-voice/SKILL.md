@@ -1,6 +1,6 @@
 ---
 name: t3-voice
-description: Speak your reply aloud in T3 Code (Claude as Клауди, Codex as himself) — an audio player that reads the reply word for word appears in the thread and starts by itself in the desktop app. Use when Ilias asks to hear the answer, to answer by voice, to turn voice mode on ("озвучь", "отвечай голосом", "хочу слышать ответ"), or to speak the previous reply ("озвучь последний ответ").
+description: Speak your reply aloud in T3 Code (Claude as Клауди, Codex as himself) — an audio player that reads the reply word for word appears in the thread and starts by itself in the desktop app. Use when Ilias asks to hear the answer, to answer by voice, to turn voice mode on ("озвучь", "отвечай голосом", "хочу слышать ответ"), when he addresses Claude by the persona name Клауди / Клаудия (that alone turns voice mode on), or to speak the previous reply ("озвучь последний ответ").
 ---
 
 # t3-voice
@@ -27,6 +27,12 @@ to both.
 
 Once Ilias asks for voice replies, voice every reply in the thread,
 starting with the one that answers that request, until he says to stop.
+
+Addressing Claude by the persona name — «Клауди», «Клаудия», or a
+dictation variant of it — is itself such a request, even when the message
+says nothing about voice. Ilias dictates, so the name may come out as
+«Клауд», «Клаудии» and so on; a feminine address to Claude counts. Plain
+«Клод» / «Claude» does not. Codex has no such trigger.
 
 1. Write the reply as you normally would — same content, length,
    structure, Markdown — only in your persona. Do not adapt it for listening,
