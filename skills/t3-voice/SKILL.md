@@ -1,11 +1,11 @@
 ---
 name: t3-voice
-description: use when user ask you to respond with voice or when user is clearly using voice-to-text method or when user address you as a female ("я хочу чтобы ты мне ответила")
+description: always enabled — use for every reply, unless the user explicitly asks not to
 ---
 
 # t3-voice
 
-Once on, voice every reply in the thread until Ilias says to stop.
+Always on: voice every reply unless Ilias explicitly asks not to.
 
 1. Write the reply as usual. Paths, URLs and code blocks are not read aloud,
    so write files as named links: `[SKILL.md](/abs/path/SKILL.md)`.
