@@ -2,8 +2,16 @@
 """Voice an agent reply in T3 Code.
 
 Reads the reply text from stdin (or, with --last, the previous reply from this
-Claude Code session's transcript), reads it aloud with OpenAI (gpt-audio-1.5 by default,
-a tts-1 model, or ChatGPT's Arbor voice via the local arbor-tts service), and prints a small HTML player to stdout for the html_render tool.
+Claude Code session's transcript), reads it aloud and prints a small HTML player
+to stdout for the html_render tool.
+
+Voices, in order of preference:
+1. A ChatGPT Read Aloud voice from the local arbor-tts service
+   (github.com/iliyasone/arbor-chatgpt-voice). When it fails, the script asks a
+   T3 webhook (URL in ~/.config/t3-voice/repair-webhook) to start a thread that
+   repairs it, at most once per REPAIR_COOLDOWN.
+2. The free Google Translate voice.
+3. Paid OpenAI gpt-audio-1.5, only when both of the above fail.
 
 The audio is stored as an MP3 behind an 8-byte PNG signature with a .png name:
 html_render only inlines local files that look like images, and the player
@@ -14,6 +22,7 @@ import argparse
 import base64
 import concurrent.futures
 import glob
+import http.client
 import json
 import os
 import re
@@ -26,13 +35,16 @@ import urllib.request
 import uuid
 
 ENV_FILE = os.path.expanduser("~/.config/openai-voice/env")
+REPAIR_WEBHOOK_FILE = os.path.expanduser("~/.config/t3-voice/repair-webhook")
+REPAIR_COOLDOWN = 3 * 3600  # one repair thread at a time is enough; it may take a while
 OUT_DIR = os.path.expanduser("~/.cache/t3-voice")
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 ARBOR_URL = os.environ.get("ARBOR_TTS_URL", "http://127.0.0.1:8811/v1/audio/speech")
 GOOGLE_TTS_URL = "https://translate.google.com/translate_tts"
 GOOGLE_MAX_CHARS = 190  # translate_tts rejects requests over ~200 characters
 GOOGLE_TEMPO = 1.25  # Ilias listens to the Google voice sped up; ffmpeg applies it (translate_tts ignores ttsspeed)
-TTS_MAX_CHARS = 4000  # /v1/audio/speech accepts at most 4096 characters
+PAID_MODEL = "gpt-audio-1.5"
+MALE_VOICES = {"arbor", "spruce", "cove", "ember"}  # ChatGPT voices that get the male paid voice
 READER_PROMPT = (
     "You are a voice actor. Read the user's text aloud exactly as written, word for word, "
     "in its language. Do not add, drop, translate or rephrase anything; no greeting, no comments. "
@@ -147,30 +159,19 @@ def post(key, url, body):
             time.sleep(0.5)
 
 
-def tts_pieces(text):
-    """Split at sentence ends into pieces the speech endpoint accepts."""
-    pieces, current = [], ""
-    for sentence in re.split(r"(?<=[.!?…])\s+", text):
-        if current and len(current) + len(sentence) + 1 > TTS_MAX_CHARS:
-            pieces.append(current)
-            current = ""
-        current = f"{current} {sentence}".strip()
-        while len(current) > TTS_MAX_CHARS:
-            pieces.append(current[:TTS_MAX_CHARS])
-            current = current[TTS_MAX_CHARS:]
-    return pieces + [current] if current else pieces
-
-
-def arbor(text):
-    """ChatGPT Read Aloud voice Arbor from arbor-tts (github.com/iliyasone/arbor-chatgpt-voice)."""
+def chatgpt(text, voice):
+    """ChatGPT Read Aloud voice from the local arbor-tts service."""
     request = urllib.request.Request(
-        ARBOR_URL, json.dumps({"input": text, "voice": "arbor"}).encode(), {"Content-Type": "application/json"}
+        ARBOR_URL, json.dumps({"input": text, "voice": voice}).encode(), {"Content-Type": "application/json"}
     )
     try:
         with urllib.request.urlopen(request, timeout=600) as response:
-            return response.read()
-    except (urllib.error.URLError, TimeoutError) as error:
+            audio = response.read()
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError) as error:
         raise SystemExit(f"arbor-tts failed: {error}")
+    if not audio:
+        raise SystemExit("arbor-tts returned no audio")
+    return audio
 
 
 def google_pieces(text):
@@ -193,7 +194,7 @@ def google_pieces(text):
 
 
 def google(text):
-    """Free Google Translate voice: the fallback when OpenAI is out of credits or down."""
+    """Free Google Translate voice: the fallback when the ChatGPT voice fails."""
     def fetch(piece):
         lang = "ru" if re.search(r"[а-яё]", piece, re.I) else "en"
         query = urllib.parse.urlencode({"ie": "UTF-8", "client": "tw-ob", "tl": lang, "q": piece})
@@ -219,24 +220,37 @@ def google(text):
         return audio
 
 
-def synthesize(key, text, model, voice):
-    if model == "arbor":
-        return arbor(text)
-    if model.startswith("tts-"):
-        body = lambda piece: {"model": model, "voice": voice, "input": piece, "response_format": "mp3"}
-        pieces = tts_pieces(text)
-        with concurrent.futures.ThreadPoolExecutor(len(pieces)) as pool:
-            return b"".join(pool.map(lambda piece: post(key, "https://api.openai.com/v1/audio/speech", body(piece)), pieces))
-    reply = json.loads(post(key, "https://api.openai.com/v1/chat/completions", {
-        "model": model,
+def paid(text, voice):
+    """OpenAI gpt-audio-1.5: the last resort, it costs money."""
+    reply = json.loads(post(api_key(), "https://api.openai.com/v1/chat/completions", {
+        "model": PAID_MODEL,
         "modalities": ["text", "audio"],
-        "audio": {"voice": voice, "format": "mp3"},
+        "audio": {"voice": "cedar" if voice in MALE_VOICES else "marin", "format": "mp3"},
         "messages": [
             {"role": "system", "content": READER_PROMPT},
             {"role": "user", "content": text},
         ],
     }))
     return base64.b64decode(reply["choices"][0]["message"]["audio"]["data"])
+
+
+def request_repair(error, fallback):
+    """Start a T3 thread that repairs the ChatGPT voice, unless one was started recently."""
+    stamp = f"{OUT_DIR}/repair-requested"
+    if os.path.exists(stamp) and time.time() - os.path.getmtime(stamp) < REPAIR_COOLDOWN:
+        return
+    try:
+        with open(REPAIR_WEBHOOK_FILE) as f:
+            url = f.read().strip()
+        body = {"error": error, "fallback": fallback, "time": time.strftime("%Y-%m-%d %H:%M:%S %Z")}
+        request = urllib.request.Request(url, json.dumps(body).encode(), {"Content-Type": "application/json"})
+        urllib.request.urlopen(request, timeout=15).close()
+    except (OSError, urllib.error.URLError, http.client.HTTPException) as e:
+        print(f"t3-voice: could not request a repair: {e}", file=sys.stderr)
+        return
+    os.makedirs(OUT_DIR, exist_ok=True)
+    open(stamp, "w").close()
+    print("t3-voice: started a repair thread", file=sys.stderr)
 
 
 PLAYER = (
@@ -254,23 +268,27 @@ PLAYER = (
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--last", action="store_true", help="speak the previous reply of this session")
-    parser.add_argument("--model", default="gpt-audio-1.5", help="gpt-audio-*, tts-1*, arbor or google (default: gpt-audio-1.5)")
-    parser.add_argument("--voice", default="marin", help="OpenAI voice (default: marin)")
+    parser.add_argument("--voice", default="sol", help="ChatGPT voice: arbor, sol, breeze, juniper, maple, vale, ... (default: sol)")
     args = parser.parse_args()
 
     started = time.time()
     text = speakable(last_reply() if args.last else sys.stdin.read())
     if not text:
         sys.exit("nothing to speak")
-    engine = args.model if args.model in ("arbor", "google") else f"{args.model}/{args.voice}"
-    if args.model == "google":
-        audio = google(text)
-    else:
+    try:
+        audio, engine = chatgpt(text, args.voice), f"chatgpt/{args.voice}"
+    except SystemExit as error:
+        failure = str(error)
         try:
-            audio = synthesize(None if args.model == "arbor" else api_key(), text, args.model, args.voice)
-        except SystemExit as error:
-            print(f"t3-voice: {error}; falling back to Google Translate", file=sys.stderr)
             audio, engine = google(text), "google (fallback)"
+        except SystemExit as google_error:
+            failure += f"; Google Translate fallback failed too: {google_error}"
+            print(f"t3-voice: {failure}; using paid OpenAI", file=sys.stderr)
+            request_repair(failure, f"paid OpenAI {PAID_MODEL}")
+            audio, engine = paid(text, args.voice), f"{PAID_MODEL} (fallback)"
+        else:
+            print(f"t3-voice: {failure}; using Google Translate", file=sys.stderr)
+            request_repair(failure, "Google Translate")
 
     os.makedirs(OUT_DIR, exist_ok=True)
     for old in glob.glob(f"{OUT_DIR}/*.png"):
