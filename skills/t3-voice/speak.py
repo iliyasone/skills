@@ -254,9 +254,23 @@ def request_repair(error, fallback):
 
 
 PLAYER = (
-    '<audio id=a controls style="width:100%;height:40px"></audio><script>'
+    # Own controls instead of <audio controls>: T3's full-screen button covers the native speed menu.
+    # The right 44px stay empty for that button.
+    '<style>#p{display:flex;align-items:center;gap:10px;height:44px;padding-right:44px;font:13px var(--font-sans)}'
+    '#p button{flex:none;height:36px;border:1px solid var(--border);border-radius:18px;background:var(--secondary);'
+    'color:var(--secondary-foreground);font:inherit;cursor:pointer}#g{width:36px;font-size:15px}#r{min-width:52px}'
+    '#s{flex:1;min-width:40px;accent-color:var(--primary)}#t{flex:none;color:var(--muted-foreground);font-variant-numeric:tabular-nums}'
+    '</style><div id=p><button id=g>▶</button><input id=s type=range min=0 max=1 step=any value=0>'
+    '<span id=t>0:00</span><button id=r>1×</button></div><audio id=a></audio><script>'
     'const S="__PATH__",b=atob(S.slice(S.indexOf(",")+1));'
     'a.src=URL.createObjectURL(new Blob([Uint8Array.from(b,c=>c.charCodeAt(0)).slice(8)],{type:"audio/mpeg"}));'
+    'const R=[1,1.25,1.5,1.75,2],f=x=>(x/60|0)+":"+String(x%60|0).padStart(2,"0");'
+    'let k=0;try{k=Math.max(0,R.indexOf(+localStorage.t3voiceRate))}catch(e){}'
+    'const rate=()=>{a.defaultPlaybackRate=a.playbackRate=R[k];r.textContent=R[k]+"×"};rate();'
+    'r.onclick=()=>{k=(k+1)%R.length;rate();try{localStorage.t3voiceRate=R[k]}catch(e){}};'
+    'g.onclick=()=>a.paused?a.play():a.pause();a.onplay=()=>g.textContent="❚❚";a.onpause=()=>g.textContent="▶";'
+    'a.onloadedmetadata=a.ontimeupdate=()=>{s.max=a.duration||1;s.value=a.currentTime;'
+    't.textContent=f(a.currentTime)+" / "+f(a.duration||0)};s.oninput=()=>a.currentTime=+s.value;'
     # Media keys and a "play/pause" gesture reach the reply through the app's media session; at the end it
     # rewinds and stays paused, so the session (and the gesture) survives to play it again.
     'const M=navigator.mediaSession;if(M){M.setActionHandler("play",()=>a.play());M.setActionHandler("pause",()=>a.pause());'
