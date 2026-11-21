@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Talk to the Proxy Switcher extension in the host's debug Chrome over CDP.
+"""Drive the proxy extension in the host's debug Chrome over CDP.
+
+The extension (loaded unpacked from C:\\chrome-debug\\proxy-extension) owns
+Chrome's proxy setting. It keeps a list of proxies synced from an admin API,
+shows the exit country's flag in the toolbar, and exposes select(id) and
+refresh() on its service worker, which this tool calls.
 
 Endpoint defaults to http://127.0.0.1:18800 — the fixed local port that
 connect.sh (next to this file) keeps pointed at the browser. Run connect.sh
@@ -26,10 +31,13 @@ Requires: pip install websocket-client  (present on dev-remote and the WSL box).
 
 Subcommands (all but `profiles` accept --profile / -p SELECTOR):
   profiles            list running profiles: index, proxy state, open tabs
-  get                 print the profile's current proxy setting
-  direct              clear the proxy (back to a direct connection)
-  set HOST PORT [SCHEME] [USER] [PASS]   apply a fixed proxy (scheme default http)
-  egress              fetch ip-api.com through the current proxy to prove egress
+  get                 print the selected proxy and the checked exit (ip, country)
+  list                refresh and print the extension's proxies (* = selected)
+  use ID|CC           select a listed proxy by id, or the first of country CC
+  direct              back to a direct connection
+  set HOST PORT [SCHEME] [USER] [PASS] [CC]   add a proxy that is not in the
+                      list (kept across syncs, negative id) and select it
+  egress              re-check the exit ip and country through the current route
   eval "<js expr>"    run an expression in the extension service-worker context
 
 SELECTOR is a 1-based index from `profiles` output, or a case-insensitive
@@ -38,7 +46,9 @@ substring of a URL/title of any tab open in that profile.
 import json, os, sys, time, urllib.request
 import websocket  # websocket-client
 
-EXTID = "iejkjpdckomcjdhmkemlfdapjodcpgih"  # Proxy Switcher
+# Chrome derives an unpacked extension's id from its folder path, so this id
+# holds as long as the extension stays loaded from C:\chrome-debug\proxy-extension.
+EXTID = "ldobdfecjhkelpkjjmofphogdpolfkkm"
 BASE = os.environ.get("CDP_HTTP", "http://127.0.0.1:18800")
 
 
@@ -134,7 +144,7 @@ def _wake_sw(rpc, profile):
     tsid = rpc("Target.attachToTarget",
                {"targetId": tmp["targetId"], "flatten": True})["sessionId"]
     rpc("Page.navigate",
-        {"url": f"chrome-extension://{EXTID}/data/popup/popup.html"}, tsid)
+        {"url": f"chrome-extension://{EXTID}/popup.html"}, tsid)
     sw = None
     for _ in range(15):
         time.sleep(0.4)
@@ -146,7 +156,7 @@ def _wake_sw(rpc, profile):
     rpc("Target.closeTarget", {"targetId": tmp["targetId"]})
     if not sw:
         raise SystemExit("extension service worker not reachable — "
-                         "is Proxy Switcher installed in this profile?")
+                         "is the proxy extension installed in this profile?")
     return sw
 
 
@@ -184,29 +194,43 @@ def list_profiles():
         ws.close()
 
 
-GET = "(async()=>JSON.stringify(await chrome.proxy.settings.get({})))()"
-DIRECT = ("(async()=>{await chrome.proxy.settings.set({scope:'regular',value:{mode:'direct'}});"
-          "await chrome.storage.local.set({'auth-active':false});"
-          "return JSON.stringify((await chrome.proxy.settings.get({})).value);})()")
+# Every command that switches ends by printing the extension's exit check:
+# {"ip", "country"} or {"error"}.
+EXIT = "JSON.stringify((await chrome.storage.local.get('exit')).exit)"
+GET = ("(async()=>{const s=await chrome.storage.local.get();"
+       "const p=(s.proxies||[]).find(x=>x.id===s.selectedId);"
+       "return JSON.stringify({proxy:p?[p.id,p.country_code,p.server+':'+p.port].join(' '):'direct',"
+       "exit:s.exit,syncError:s.syncError||undefined,"
+       "control:(await chrome.proxy.settings.get({})).levelOfControl})})()")
+LIST = ("(async()=>{await refresh();const s=await chrome.storage.local.get();"
+        "return (s.proxies||[]).map(p=>[p.id===s.selectedId?'*':' ',p.id,p.country_code,"
+        "p.scheme+'://'+p.server+':'+p.port].join(' ')).join('\\n')||s.syncError||'no proxies'})()")
+DIRECT = "(async()=>{await select(null);return " + EXIT + "})()"
+EGRESS = ("(async()=>{const s=await chrome.storage.local.get('selectedId');"
+          "await select(s.selectedId??null,false);return " + EXIT + "})()")
 
-def _set_js(host, port, scheme, user, pw):
-    auth = ""
-    if user:
-        auth = (f"await chrome.storage.local.set({{'auth-active':true,"
-                f"'auth-username':{json.dumps(user)},'auth-password':{json.dumps(pw or '')}}});"
-                "try{core.action.webrequest.initiate();}catch(e){}")
-    return ("(async()=>{" + auth +
-            "await chrome.proxy.settings.set({scope:'regular',value:{mode:'fixed_servers',rules:{"
-            f"singleProxy:{{scheme:{json.dumps(scheme)},host:{json.dumps(host)},port:{int(port)}}},"
-            "bypassList:['localhost','127.0.0.1']}}});"
-            "return JSON.stringify((await chrome.proxy.settings.get({})).value);})()")
 
-EGRESS = ("(async()=>{try{core.action.webrequest.initiate();}catch(e){}"
-          "const c=new AbortController();const t=setTimeout(()=>c.abort(),12000);"
-          "try{const r=await fetch('http://ip-api.com/json/?fields=query,country,city',"
-          "{signal:c.signal,cache:'no-store'});clearTimeout(t);"
-          "return JSON.stringify(await r.json());}"
-          "catch(e){clearTimeout(t);return JSON.stringify({error:String(e)});}})()")
+def _use_js(choice):
+    """A number selects that proxy id; two letters select the country's
+    proxy with the lowest id."""
+    match = (f"p.id==={int(choice)}" if choice.lstrip("-").isdigit()
+             else f"p.country_code==={json.dumps(choice.lower())}")
+    return ("(async()=>{await refresh();const s=await chrome.storage.local.get('proxies');"
+            f"const p=(s.proxies||[]).filter(p=>{match}).sort((a,b)=>a.id-b.id)[0];"
+            f"if(!p)throw new Error('no proxy matches '+{json.dumps(choice)});"
+            "await select(p.id);return " + EXIT + "})()")
+
+
+def _set_js(host, port, scheme, user, pw, country):
+    entry = {"scheme": scheme, "server": host, "port": int(port),
+             "username": user or None, "password": pw or None,
+             "country_code": country.lower() or None, "archived_at": None}
+    return ("(async()=>{const l=(await chrome.storage.local.get('proxies')).proxies||[];"
+            f"const e={json.dumps(entry)};"
+            "const old=l.find(p=>p.id<0&&p.server===e.server&&p.port===e.port);"
+            "e.id=old?old.id:Math.min(0,...l.map(p=>p.id))-1;"
+            "await chrome.storage.local.set({proxies:l.filter(p=>p!==old).concat([e])});"
+            "await select(e.id);return " + EXIT + "})()")
 
 
 def main(argv):
@@ -228,16 +252,18 @@ def main(argv):
         list_profiles()
     elif cmd == "get":
         print(sw_eval(GET, selector))
+    elif cmd == "list":
+        print(sw_eval(LIST, selector))
+    elif cmd == "use":
+        print(sw_eval(_use_js(args[1]), selector))
     elif cmd == "direct":
         print(sw_eval(DIRECT, selector))
     elif cmd == "egress":
         print(sw_eval(EGRESS, selector))
     elif cmd == "set":
         host, port = args[1], args[2]
-        scheme = args[3] if len(args) > 3 else "http"
-        user = args[4] if len(args) > 4 else ""
-        pw = args[5] if len(args) > 5 else ""
-        print(sw_eval(_set_js(host, port, scheme, user, pw), selector))
+        scheme, user, pw, country = (args[3:] + ["http", "", "", ""][len(args[3:]):])[:4]
+        print(sw_eval(_set_js(host, port, scheme, user, pw, country), selector))
     elif cmd == "eval":
         print(sw_eval(args[1], selector))
     else:

@@ -189,9 +189,13 @@ Ask Iliyas before `set` or `direct` on any profile, unless he asked for the
 proxy change. Reverting your own approved `set` with `direct` needs no
 second ask; a proxy you found already set is his to decide.
 
-Chrome carries the **Proxy Switcher** extension
-(`iejkjpdckomcjdhmkemlfdapjodcpgih`), which owns the proxy setting. The proxy
-is **per Chrome profile**, not per window: the browser can run several
+Chrome's proxy setting is owned by our own proxy extension, loaded unpacked
+from `C:\chrome-debug\proxy-extension` (id `ldobdfecjhkelpkjjmofphogdpolfkkm`,
+source: `proxy-switcher/` in the reverse-api repo). Its toolbar icon is the
+flag of the country the browser really exits from (a red `!` when the proxy
+does not connect); its menu lists the proxies of the reverse-api admin API
+(`GET /admin/proxies`, refreshed every 5 minutes) plus any added by hand. The
+proxy is **per Chrome profile**, not per window: the browser can run several
 profiles at once (separate windows, cookies, extension copies), and each can
 sit behind a different proxy. `cdp.py` (next to this file) drives it. It
 defaults to the fixed endpoint `http://127.0.0.1:18800` (run `connect.sh`
@@ -199,11 +203,17 @@ first); `$CDP_HTTP` overrides that only when running somewhere else.
 
 ```bash
 python3 cdp.py profiles             # list running profiles by their open tabs
-python3 cdp.py get -p 2             # proxy setting of profile 2 from that list
-python3 cdp.py set 82.38.65.142 41196 http proxyuser 'PASSWORD' -p proton
-python3 cdp.py egress -p proton     # prove the exit IP/country through it
-python3 cdp.py direct -p proton     # revert that profile to direct
+python3 cdp.py get -p 2             # selected proxy and exit of profile 2
+python3 cdp.py list -p 2            # the extension's proxies, * = selected
+python3 cdp.py use ie -p 2          # select a listed proxy by country (or by id)
+python3 cdp.py set 82.38.65.142 41196 http proxyuser 'PASSWORD' nl -p 2
+                                    # add a proxy that is not listed and select it
+python3 cdp.py egress -p 2          # re-check the exit IP/country
+python3 cdp.py direct -p 2          # back to direct
 ```
+
+Every switching command prints the exit the extension then measured:
+`{"ip", "country"}`, or `{"error"}` when nothing goes through.
 
 `--profile` / `-p` takes an index from `profiles` or a substring of a
 URL/title of a tab open in that profile. With a single profile running it can
@@ -217,35 +227,29 @@ profiles' browserContextIds). `cdp.py` wakes it by `window.open`ing a
 throwaway tab from one of that profile's own pages, CDP-navigating it to the
 extension popup, then closing it.
 
-`set` calls `chrome.proxy.settings.set` for that profile (exactly what the
-extension popup does) and, when a username is given, writes the extension's
-`auth-username`/`auth-password` storage and re-arms its `onAuthRequired`
-handler so authenticated proxies don't pop a dialog.
+The extension answers the proxy's login itself from its list, so
+authenticated proxies don't pop a dialog. A hand-added proxy (negative id)
+survives the list refreshes; a listed proxy archived in the panel drops the
+browser to direct.
 
-**Always `direct` when done** on the profile Iliyas browses in himself — a
-proxy left there changes his own browsing. A dedicated proxy profile can keep
-its proxy.
+**Always `direct` when done** with a proxy you set for your own task on the
+profile Iliyas browses in himself — a proxy left there changes his own
+browsing. A proxy he chose stays.
 
-Adding the extension to a new profile is a manual step: open
-`https://chromewebstore.google.com/detail/iejkjpdckomcjdhmkemlfdapjodcpgih`
-in that profile's window and have Iliyas click "Add to Chrome" — the install
-confirmation is native UI, unreachable over CDP.
+The old Proxy Switcher extension (`iejkjpdckomcjdhmkemlfdapjodcpgih`) may
+still be installed; it no longer controls anything (the extension installed
+last wins) and is not used. Loading the extension into another profile, or
+again after a Chrome reset, works over CDP:
+`Extensions.loadUnpacked {"path": "C:\\chrome-debug\\proxy-extension"}` on the
+browser websocket (the debug Chrome allows it). Then Iliyas pins it from the
+puzzle-piece menu.
 
 ### Where proxies come from
 
-The reverse-api project owns a `proxy` table (Postgres, Heroku app
-`pinc000`): columns `scheme, server, port, username, password, country_code`.
-HTTP proxies with user/pass auth, selected by `country_code` (ISO-3166
-alpha-2). Query it rather than hardcoding credentials:
-
-```bash
-# on dev-remote, heroku CLI is authed to app pinc000
-heroku pg:psql -a pinc000 -c \
-  "select scheme,server,port,username,password,country_code from proxy where country_code='nl';"
-```
-
-There is no rotation — a proxy is sticky per account — so for browser use
-pick any row for the country you want.
+The extension's list is the reverse-api `proxy` table, through the admin API
+(backend URL and an admin login are in the extension's settings). A proxy
+that answers `401` while its port is open usually had its credentials
+rotated by the provider: the provider's cabinet has the new ones.
 
 ## Launching the debug Chrome
 
