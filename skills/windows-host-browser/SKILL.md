@@ -190,10 +190,10 @@ proxy change. Reverting your own approved `set` with `direct` needs no
 second ask; a proxy you found already set is his to decide.
 
 Chrome's proxy setting is owned by our own proxy extension, loaded unpacked
-from `C:\chrome-debug\proxy-extension` (id `ldobdfecjhkelpkjjmofphogdpolfkkm`,
-source: `proxy-switcher/` in the reverse-api repo). Its toolbar icon is the
+from `C:\chrome-debug\proxy-extension` (id `ldobdfecjhkelpkjjmofphogdpolfkkm`;
+the folder's README says where its source lives). Its toolbar icon is the
 flag of the country the browser really exits from (a red `!` when the proxy
-does not connect); its menu lists the proxies of the reverse-api admin API
+does not connect); its menu lists the proxies of an admin API
 (`GET /admin/proxies`, refreshed every 5 minutes) plus any added by hand. The
 proxy is **per Chrome profile**, not per window: the browser can run several
 profiles at once (separate windows, cookies, extension copies), and each can
@@ -236,18 +236,19 @@ browser to direct.
 profile Iliyas browses in himself — a proxy left there changes his own
 browsing. A proxy he chose stays.
 
-The old Proxy Switcher extension (`iejkjpdckomcjdhmkemlfdapjodcpgih`) may
-still be installed; it no longer controls anything (the extension installed
-last wins) and is not used. Loading the extension into another profile, or
-again after a Chrome reset, works over CDP:
-`Extensions.loadUnpacked {"path": "C:\\chrome-debug\\proxy-extension"}` on the
-browser websocket (the debug Chrome allows it). Then Iliyas pins it from the
-puzzle-piece menu.
+Only one extension can own the proxy setting (the one installed last wins),
+so keep no other proxy extension installed. Extensions are managed over CDP:
+
+- install into another profile, or again after a Chrome reset:
+  `Extensions.loadUnpacked {"path": "C:\\chrome-debug\\proxy-extension"}` on
+  the browser websocket; then Iliyas pins it from the puzzle-piece menu;
+- uninstall a store extension (`Extensions.uninstall` takes only unpacked
+  ones): open `chrome://extensions/` as a background tab and evaluate
+  `chrome.management.uninstall(id, {showConfirmDialog: false})` in it.
 
 ### Where proxies come from
 
-The extension's list is the reverse-api `proxy` table, through the admin API
-(backend URL and an admin login are in the extension's settings). A proxy
+The backend URL and an admin login are in the extension's settings. A proxy
 that answers `401` while its port is open usually had its credentials
 rotated by the provider: the provider's cabinet has the new ones.
 
