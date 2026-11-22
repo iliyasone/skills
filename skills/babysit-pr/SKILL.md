@@ -1,6 +1,6 @@
 ---
 name: babysit-pr
-description: Drive a PR to a clean review. Each round a fresh T3 Code reviewer (GPT-6.1 Sol, Opus as fallback) hunts bugs in the whole diff against the PR's pinned scope; you defend your code, fix the real findings minimally, push, and repeat until a round needs no fix. Use when asked to babysit a PR, "review and fix until clean", or run a review-fix loop on the current branch.
+description: Drive a PR to a clean review. Each round a fresh T3 Code reviewer (GPT-6.2 Sol, Opus as fallback) hunts bugs in the whole diff against the PR's pinned scope; you defend your code, fix the real findings minimally, push, and repeat until a round needs no fix. Use when asked to babysit a PR, "review and fix until clean", or run a review-fix loop on the current branch.
 ---
 
 # Babysit PR
@@ -49,7 +49,7 @@ Reviewers run as T3 Code delegated tasks (`delegate_task` from the `t3-code`
 MCP server), never as the agent's own native sub-agents: only T3 applies the
 model and reasoning options.
 
-**Reviewer: GPT-6.1 Sol on high reasoning.** Each round is a new call:
+**Reviewer: GPT-6.2 Sol on high reasoning.** Each round is a new call:
 
 ```json
 {
@@ -60,7 +60,7 @@ model and reasoning options.
   "clientRequestId": "babysit-pr-<repo>-<PR>-round-<N>",
   "target": {
     "providerInstanceId": "codex",
-    "model": "gpt-6.1-sol",
+    "model": "gpt-6.2-sol",
     "options": { "reasoningEffort": "high" }
   },
   "task": "<the reviewer prompt below>"
@@ -87,7 +87,7 @@ provider or the model is missing from `orchestrator_capabilities`: the same
 call with a Claude provider instance that lists `claude-opus-5-5` (prefer the
 one this thread runs on), `"model": "claude-opus-5-5"`,
 `"options": { "effort": "high" }`. Say in the report which rounds used the
-fallback and why. Every round tries GPT-6.1 Sol first.
+fallback and why. Every round tries GPT-6.2 Sol first.
 
 This reviewer is the only one: don't also request `@codex`, CodeRabbit or other
 review bots on the PR unless the user asks.
@@ -215,7 +215,7 @@ Reviewed with babysit-pr: <N> rounds with <model> on <effort>. Verdict: approved
   or every open item is out of scope or waiting on the user; `not approved
   after <N> rounds` when the last allowed round still had a fix. For the last
   two, add `, open: <short list of the unfixed blocker/should items>`.
-- `<model>` is the reviewer of the last round (e.g. `GPT-6.1 Sol`,
+- `<model>` is the reviewer of the last round (e.g. `GPT-6.2 Sol`,
   `Claude Opus 5.5`); name both when rounds used different models.
 - Write `on <effort>` only when the task result's `options` confirmed it;
   otherwise drop it.
