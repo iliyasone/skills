@@ -191,14 +191,39 @@ Your buckets drive the loop, not the reviewer's verdict alone:
   reviewer.
 - Nothing to fix → done. That covers `APPROVE`, and also `REQUEST_CHANGES`
   where every open item is pushed back, out of scope, or waiting on the user.
-- After 5 rounds, stop anyway. Running out of rounds is not approval: report
+- **Round 5 is a checkpoint, not the end.** The budget exists so that you dare
+  to say no to a reviewer, not so that code goes unreviewed. At round 5, ask
+  whether the loop is converging:
+  - reviewers keep finding real `blocker`/`should` bugs, especially in code no
+    earlier round saw → continue, up to 10 rounds;
+  - the findings are nitpicks, repeats, or scope creep → push back on them and
+    stop.
+
+  10 rounds is the hard limit. Running out of rounds is not approval: report
   which findings stay open and which fixes from the last round no reviewer has
   seen.
 - During a live incident, if the user asks to deploy the fix first, deploy, then
   review; never hold an outage fix behind review rounds.
-- Nit fixes from the last round need no extra round; list them in the report.
-  Any other commit pushed after the loop ended is unreviewed: run a round
-  before calling the PR clean.
+
+### Code pushed after the loop
+
+The loop reviews one head SHA, not the PR forever. Nit fixes from the last
+round need no extra round; list them in the report. Every other commit pushed
+after the last reviewed SHA is unreviewed, however many rounds the PR already
+used:
+
+- A fix or follow-up to the reviewed code → run one round on the whole PR
+  before calling it clean or merging it.
+- New behaviour (a feature, money, status or permission logic) → start a new
+  loop with its own budget. Rounds spent before it was written never cover it.
+
+Writing a commit into the "not seen by a reviewer" list, the PR description or
+the report does not review it. That list is only for the last round's fixes
+when the 10-round limit is hit.
+
+Before merging, also read the PR's unanswered review comments (bots and
+people: `gh api repos/<owner>/<repo>/pulls/<n>/comments`). Judge each like a
+finding from step 2 and answer it on the PR; a fix restarts the rule above.
 
 ## 5. Stamp the PR and report
 
@@ -207,13 +232,17 @@ the stamp and `gh pr checks`), directly above the agent's generated-by line (suc
 is one, else at the end:
 
 ```
-Reviewed with babysit-pr: <N> rounds with <model> on <effort>. Verdict: approved
+Reviewed with babysit-pr at <short SHA>: <N> rounds with <model> on <effort>. Verdict: approved
 ```
+
+- `<short SHA>` is the head the last round reviewed. Before merging, compare it
+  with the PR's head: commits after it, other than the last round's nits, need
+  review (see "Code pushed after the loop").
 
 - Verdict: `approved` when the last reviewer said `APPROVE`; `pushed back`
   when it said `REQUEST_CHANGES` and you closed the loop over its findings
   or every open item is out of scope or waiting on the user; `not approved
-  after <N> rounds` when the last allowed round still had a fix. For the last
+  after <N> rounds` when the 10th round still had a fix. For the last
   two, add `, open: <short list of the unfixed blocker/should items>`.
 - `<model>` is the reviewer of the last round (e.g. `GPT-6.2 Sol`,
   `Claude Opus 5.5`); name both when rounds used different models.
