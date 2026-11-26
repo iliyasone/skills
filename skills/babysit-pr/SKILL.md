@@ -23,6 +23,16 @@ instead of conceding to whatever a reviewer says.
   (`gh pr view --json number,title,body,baseRefName,headRefName,url,mergeable`);
   its `baseRefName` is the base. With no PR, review the current branch against
   the base branch the repo's AGENTS.md / CLAUDE.md names.
+- **One piece of work is one target, however many PRs carry it.** A change
+  split across repos (a backend PR and the frontend PR that shows it) is
+  reviewed as a whole: one scope, one reviewer per round who gets the diff of
+  every PR and judges them together, including how the two sides fit (fields,
+  statuses and endpoints one side sends and the other reads, and what happens
+  while only one side is deployed). Never run a separate loop per PR. The
+  steps below apply to each PR of the target: every branch is checked out
+  clean, every repo runs its checks, a fix goes into the PR whose code is
+  wrong, a push to any PR means the next round reviews all of them, and every
+  PR gets the same stamp. `clientRequestId` names the first PR.
 - Check out the head branch; the working tree must be clean and up to date with
   the remote (`git pull --ff-only`).
 - The branch must merge cleanly into the base. If it conflicts, rebase or merge
