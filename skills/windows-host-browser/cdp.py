@@ -13,8 +13,9 @@ run (see SKILL.md — the Windows-side debug port itself is not fixed).
 
 The browser can run several Chrome profiles at once. Each profile has its own
 windows, cookies, copy of the extension — and therefore its own proxy setting.
-Profiles surface in CDP as distinct browserContextIds; this tool tells them
-apart by the pages they have open. With one profile running, commands work as
+Profiles surface in CDP as distinct browserContextIds; this tool maps each to
+its profile dir by reading chrome://version in a throwaway tab once per browser
+run, and takes the names from Local State on the Windows host (over ssh). With one profile running, commands work as
 before; with several you must pick one (see `profiles` / --profile below).
 
 Gotchas this file already handles, learned the hard way:
@@ -22,15 +23,19 @@ Gotchas this file already handles, learned the hard way:
     (suppress_origin=True), because the browser was started without
     --remote-allow-origins.
   * The extension is MV3, so its service worker sleeps when idle and drops out
-    of the target list. Waking the right profile's worker matters:
-    Target.createTarget cannot address a real profile's browserContextId, so we
+    of the target list. Waking the right profile's worker matters: we
     window.open an about:blank tab from one of the profile's own pages, CDP-
     navigate it to the extension popup (privileged, so allowed), then close it.
 
 Requires: pip install websocket-client  (present on dev-remote and the WSL box).
 
 Subcommands (all but `profiles` accept --profile / -p SELECTOR):
-  profiles            list running profiles: index, proxy state, open tabs
+  profiles            list every profile, the main one first: dir, name,
+                      running or not, proxy extension, open tabs
+  open URL            open URL as a tab in the profile (default: the main one,
+                      Default «Your Chrome»); prints {targetId, profile, ...}.
+                      Running profile: background tab. Not running: started
+                      via the `chromeprofile` scheduled task, window in front.
   get                 print the selected proxy and the checked exit (ip, country)
   list                refresh and print the extension's proxies (* = selected)
   use ID|CC           select a listed proxy by id, or the first of country CC
@@ -40,11 +45,19 @@ Subcommands (all but `profiles` accept --profile / -p SELECTOR):
   egress              re-check the exit ip and country through the current route
   eval "<js expr>"    run an expression in the extension service-worker context
 
-SELECTOR is a 1-based index from `profiles` output, or a case-insensitive
-substring of a URL/title of any tab open in that profile.
+SELECTOR is a 1-based index from `profiles` output, a profile dir or name
+(«Default», «Nolan»), or a case-insensitive substring of a URL/title of a tab
+open in that profile. Proxy commands need the profile running.
 """
-import json, os, sys, time, urllib.request
+import base64, json, os, re, subprocess, sys, time, urllib.request
 import websocket  # websocket-client
+
+UDD = "C:\\chrome-debug"  # the debug Chrome's --user-data-dir
+CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+# Ilias's own profile («Your Chrome», the first one): all his logins — Notion,
+# Google, Vercel, … Other profiles only when the task names them.
+MAIN = "Default"
+CACHE = os.path.expanduser("~/.cache/windows-host-browser/profiles.json")
 
 # Chrome derives an unpacked extension's id from its folder path, so this id
 # holds as long as the extension stays loaded from C:\chrome-debug\proxy-extension.
@@ -76,52 +89,193 @@ def _rpc_factory(ws):
     return rpc
 
 
+def _win(ps):
+    """Run PowerShell on the Windows host (directly from the WSL box, through
+    `ssh wsl` from dev-remote) and return its stdout."""
+    ps = "$ProgressPreference='SilentlyContinue';" + ps
+    cmd = ("powershell -NoProfile -NonInteractive -EncodedCommand "
+           + base64.b64encode(ps.encode("utf-16-le")).decode())
+    try:
+        cfg = open(os.path.expanduser("~/.ssh/config")).read()
+    except OSError:
+        cfg = ""
+    if re.search(r"(?m)^Host\s+windows\b", cfg):
+        argv = ["ssh", "windows", cmd]
+    else:
+        argv = ["ssh", "-o", "KexAlgorithms=curve25519-sha256@libssh.org,curve25519-sha256",
+                "wsl", f"ssh windows '{cmd}'"]
+    r = subprocess.run(argv, capture_output=True, text=True, timeout=90)
+    if r.returncode:
+        raise SystemExit("Windows host: " + (r.stderr.strip() or f"exit {r.returncode}")[-500:])
+    return r.stdout
+
+
+def _all_dirs():
+    """{profile dir: name} from Chrome's Local State, Default first."""
+    raw = _win(f"Get-Content -Raw -Encoding UTF8 '{UDD}\\Local State'")
+    info = json.loads(raw)["profile"]["info_cache"]
+    key = lambda d: (d != MAIN, int(re.sub(r"\D", "", d) or 0))
+    return {d: info[d].get("name", d) for d in sorted(info, key=key)}
+
+
+def _load_cache(browser_ws):
+    """ctx → profile dir, valid for one browser run (ids change on restart)."""
+    try:
+        c = json.load(open(CACHE))
+    except (OSError, ValueError):
+        c = {}
+    return c if c.get("browser") == browser_ws else {"browser": browser_ws, "ctx": {}}
+
+
+def _save_cache(c):
+    os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+    json.dump(c, open(CACHE, "w"))
+
+
+def _helper_tab(rpc, ctx, pages, url="about:blank"):
+    """Open a background tab in context ctx; returns its targetId."""
+    try:
+        return rpc("Target.createTarget",
+                   {"url": url, "browserContextId": ctx, "background": True})["targetId"]
+    except RuntimeError:
+        pass  # older Chrome refuses real profiles' ids: open it from their page
+    before = {t["targetId"] for t in rpc("Target.getTargets")["targetInfos"]}
+    sid = rpc("Target.attachToTarget",
+              {"targetId": pages[0]["targetId"], "flatten": True})["sessionId"]
+    rpc("Runtime.evaluate",
+        {"expression": f"window.open({json.dumps(url)})", "userGesture": True}, sid)
+    for _ in range(20):
+        time.sleep(0.3)
+        new = [t for t in rpc("Target.getTargets")["targetInfos"]
+               if t["type"] == "page" and t["targetId"] not in before
+               and t.get("browserContextId") == ctx]
+        if new:
+            return new[0]["targetId"]
+    raise SystemExit("could not open a tab in that profile")
+
+
+def _ctx_dir(rpc, ctx, pages):
+    """Profile dir of a running context, read from chrome://version once."""
+    tid = _helper_tab(rpc, ctx, pages)
+    try:
+        sid = rpc("Target.attachToTarget", {"targetId": tid, "flatten": True})["sessionId"]
+        rpc("Page.navigate", {"url": "chrome://version"}, sid)
+        for _ in range(20):
+            time.sleep(0.3)
+            v = rpc("Runtime.evaluate",
+                    {"expression": "document.getElementById('profile_path')?.textContent",
+                     "returnByValue": True}, sid)["result"].get("value")
+            if v:
+                return v.rstrip("\\").split("\\")[-1]
+    finally:
+        rpc("Target.closeTarget", {"targetId": tid})
+    raise SystemExit("could not read chrome://version")
+
+
 def _profiles(rpc):
-    """Profiles = browser contexts that have page targets. Sorted for stable
-    indexing within one browser run (context ids change across restarts)."""
-    targets = rpc("Target.getTargets")["targetInfos"]
+    """Every profile of the browser, Ilias's main one first. Running ones carry
+    their context id, open pages and proxy-extension worker; others ctx=None."""
+    browser_ws = _http("/json/version")["webSocketDebuggerUrl"]
+    cache = _load_cache(browser_ws)
     by_ctx = {}
-    for t in targets:
+    for t in rpc("Target.getTargets")["targetInfos"]:
         by_ctx.setdefault(t.get("browserContextId", "?"), []).append(t)
-    profiles = []
-    for ctx in sorted(by_ctx):
-        pages = [t for t in by_ctx[ctx] if t["type"] == "page"]
+    running = {}
+    for ctx, ts in by_ctx.items():
+        pages = [t for t in ts if t["type"] == "page"]
         if not pages:
             continue  # UI-only context, not a profile
-        sw = next((t for t in by_ctx[ctx]
-                   if t["type"] == "service_worker" and EXTID in t["url"]), None)
-        profiles.append({"ctx": ctx, "pages": pages, "sw": sw})
-    return profiles
+        if ctx not in cache["ctx"]:
+            cache["ctx"][ctx] = _ctx_dir(rpc, ctx, pages)
+        sw = next((t for t in ts if t["type"] == "service_worker" and EXTID in t["url"]), None)
+        running[cache["ctx"][ctx]] = {"ctx": ctx, "pages": pages, "sw": sw}
+    _save_cache(cache)
+    dirs = _all_dirs()
+    for d in running:
+        dirs.setdefault(d, d)
+    return [{"dir": d, "name": n, **running.get(d, {"ctx": None, "pages": [], "sw": None})}
+            for d, n in dirs.items()]
 
 
-def _pick(profiles, selector):
+def _pick(profiles, selector, need_running=True):
+    """SELECTOR: index from `profiles`, profile dir or name («Default», «Nolan»),
+    or a substring of a URL/title open in that profile."""
+    live = [p for p in profiles if p["ctx"]]
     if selector is None:
-        if len(profiles) == 1:
-            return profiles[0]
-        raise SystemExit(
-            "several profiles are running — pick one with --profile:\n"
-            + _fmt_profiles(profiles))
-    if selector.isdigit() and 1 <= int(selector) <= len(profiles):
-        return profiles[int(selector) - 1]
+        if len(live) == 1:
+            return live[0]
+        raise SystemExit("pick a profile with --profile:\n" + _fmt_profiles(profiles))
     s = selector.lower()
-    hits = [p for p in profiles
-            if any(s in (t["url"] + " " + t.get("title", "")).lower()
-                   for t in p["pages"])]
+    if selector.isdigit() and 1 <= int(selector) <= len(profiles):
+        hits = [profiles[int(selector) - 1]]
+    else:
+        hits = [p for p in profiles if s in (p["dir"].lower(), p["name"].lower())]
+        hits = hits or [p for p in live
+                        if any(s in (t["url"] + " " + t.get("title", "")).lower()
+                               for t in p["pages"])]
     if len(hits) != 1:
-        raise SystemExit(
-            f"--profile {selector!r} matched {len(hits)} profiles:\n"
-            + _fmt_profiles(profiles))
+        raise SystemExit(f"--profile {selector!r} matched {len(hits)} profiles:\n"
+                         + _fmt_profiles(profiles))
+    if need_running and not hits[0]["ctx"]:
+        raise SystemExit(f"profile {hits[0]['name']!r} is not running — "
+                         f"`cdp.py open URL -p {hits[0]['dir']!r}` starts it")
     return hits[0]
 
 
 def _fmt_profiles(profiles):
     out = []
     for i, p in enumerate(profiles, 1):
-        ext = "extension: yes" if p["sw"] else "extension: no/asleep"
-        out.append(f"  {i}. [{p['ctx'][:8]}] {ext}")
+        main = "  ← MAIN: Ilias's own logins (Notion, Google, Vercel…)" if p["dir"] == MAIN else ""
+        out.append(f"  {i}. {p['dir']} «{p['name']}»{main}")
+        if not p["ctx"]:
+            out.append("       not running")
+            continue
+        ext = "yes" if p["sw"] else "no/asleep"
+        out.append(f"       running [{p['ctx'][:8]}], proxy extension: {ext}")
         for t in p["pages"]:
             out.append(f"       {t['url'][:70]}  {t.get('title', '')[:40]}")
     return "\n".join(out)
+
+
+def open_url(url, selector=None):
+    """Open url as a tab in a profile (default: MAIN) and print the tab.
+    A running profile gets a background tab; one that isn't running is started
+    through the `chromeprofile` scheduled task (its window comes to the front)."""
+    browser_ws = _http("/json/version")["webSocketDebuggerUrl"]
+    ws = websocket.create_connection(browser_ws, max_size=None, suppress_origin=True)
+    try:
+        rpc = _rpc_factory(ws)
+        p = _pick(_profiles(rpc), selector or MAIN, need_running=False)
+        if p["ctx"]:
+            tid = _helper_tab(rpc, p["ctx"], p["pages"], url)
+            how = "background tab"
+        else:
+            before = {t["targetId"] for t in rpc("Target.getTargets")["targetInfos"]}
+            q = url.replace("'", "''").replace('"', "%22")
+            _win(f"""
+$a = New-ScheduledTaskAction -Execute '{CHROME}' -Argument '--user-data-dir={UDD} --profile-directory="{p['dir']}" "{q}"'
+if (Get-ScheduledTask -TaskName chromeprofile -EA 0) {{ Set-ScheduledTask -TaskName chromeprofile -Action $a | Out-Null }}
+else {{ Register-ScheduledTask -TaskName chromeprofile -Action $a -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries) -Principal (New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive) | Out-Null }}
+Start-ScheduledTask -TaskName chromeprofile""")
+            tid = None
+            for _ in range(40):
+                time.sleep(0.5)
+                new = [t for t in rpc("Target.getTargets")["targetInfos"]
+                       if t["type"] == "page" and t["targetId"] not in before]
+                if new:
+                    tid = new[0]["targetId"]
+                    cache = _load_cache(browser_ws)
+                    cache["ctx"][new[0]["browserContextId"]] = p["dir"]
+                    _save_cache(cache)
+                    break
+            if not tid:
+                raise SystemExit("the profile did not open a tab (is Ilias logged on to Windows?)")
+            how = "new window, in front"
+    finally:
+        ws.close()
+    print(json.dumps({"targetId": tid, "profile": p["dir"], "name": p["name"], "opened": how,
+                      "webSocketDebuggerUrl": BASE.replace("http", "ws", 1) + "/devtools/page/" + tid},
+                     ensure_ascii=False))
 
 
 def _wake_sw(rpc, profile):
@@ -250,6 +404,8 @@ def main(argv):
     cmd = args[0] if args else "get"
     if cmd == "profiles":
         list_profiles()
+    elif cmd == "open":
+        open_url(args[1], selector)
     elif cmd == "get":
         print(sw_eval(GET, selector))
     elif cmd == "list":

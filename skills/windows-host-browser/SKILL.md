@@ -8,7 +8,9 @@ description: >-
   proxy / exit country. Use it when Iliyas asks for his real / host / Windows
   browser, or on your own when a headless browser or CLI can't do the job
   (Cloudflare challenge, captcha, a page behind his login) — everything it
-  does is visible on his screen, so say what you opened.
+  does is visible on his screen, so say what you opened. The browser has
+  several profiles; his logins are in the first one, and pages are opened
+  with `cdp.py open` into a chosen profile.
 ---
 
 # Windows host browser
@@ -39,13 +41,34 @@ on your own when the cheaper routes failed:
 - something only happens in his browser or session, and headless can't
   reproduce it.
 
-Unasked, open your page as a background tab, so his active tab keeps the
-focus: `Target.createTarget` with `background: true` on the browser websocket
-(`GET /json/version` → `webSocketDebuggerUrl`; connect without an Origin
-header, as cdp.py does), not `PUT /json/new`. Bring it forward with
-`Target.activateTarget` only when he has to act on it (a captcha). If Chrome
-has no window open, a new window appears anyway; say so. The tab lands in the
-default profile: if the login you need lives in another profile, ask him. You
+### Pick the profile first — `cdp.py profiles`, then `cdp.py open`
+
+The browser holds several Chrome profiles, each with its own cookies and
+proxy. **Default «Your Chrome» — the first one — is Iliyas's own: all his
+logins (Notion, Google, Vercel, …) live there.** The others (PS3838, Nolan,
+Ryan, Murphy) are separate identities for other tasks; use one only when the
+task names it. If you cannot tell which profile a task needs, ask him.
+
+Never open pages with `PUT /json/new` or a bare `Target.createTarget`: they
+land in whichever profile Chrome happened to start with (the last one
+used), not the one you need. Open through `cdp.py` (next to this file):
+
+```bash
+python3 cdp.py profiles                    # every profile, main first: running or not, tabs
+python3 cdp.py open 'https://app.notion.com/p/…'            # main profile (default)
+python3 cdp.py open 'https://…' -p Nolan  # another profile, by name, dir or index
+# → {"targetId", "profile", "name", "opened", "webSocketDebuggerUrl"}
+```
+
+`open` makes a background tab when the profile is running; when it is not, it
+starts that profile through the `chromeprofile` scheduled task, and its window
+comes to the front — say so. Work in the returned `targetId` (attach to its
+`webSocketDebuggerUrl`) and `/json/close/<targetId>` it when done.
+
+Unasked, keep to that background tab, so his active tab keeps the focus.
+Bring it forward with `Target.activateTarget` only when he has to act on it
+(a captcha, a sign-in). If a page asks to sign in, you are in the wrong
+profile or his session has expired: check `profiles`, then ask him. You
 may read and navigate a handful of pages the task needs, at human pace, in a
 tab you opened yourself (a blank tab of his you took over under "Reuse
 existing windows" counts as yours, to navigate and to close). Write in the
@@ -157,10 +180,10 @@ From there it is plain CDP against `$CDP_HTTP`:
 - `GET /json/list` — tabs and their websocket URLs; attach with any CDP
   client to evaluate JS, capture screenshots, or watch network events
   (`Network.enable` + `Network.requestWillBeSent` / `responseReceived`).
-- `PUT /json/new?url=…` — open a page (a visible tab on Iliyas's screen —
-  say so when you do it).
+- `python3 cdp.py open URL [-p PROFILE]` — open a page in the right profile
+  (see «Pick the profile first»), not `PUT /json/new`.
 - `GET /json/version` → `webSocketDebuggerUrl` — the browser websocket, for
-  `Target.*` calls such as `createTarget`.
+  `Target.*` calls such as `activateTarget`.
 
 ### Reuse existing windows — don't multiply them
 
@@ -173,9 +196,8 @@ what's there, in this order:
    websocket, `Page.navigate`) instead of creating a target. A fresh blank
    tab may be another agent's, about to navigate; if you can't tell, treat
    it as not yours and go to rule 2.
-2. **The open tabs are your own or clearly idle** (not something Iliyas is
-   actively working in): open your page as a tab in that same window —
-   `PUT /json/new` does this, it targets an existing window.
+2. **Otherwise** open your page with `cdp.py open`: a running profile gets a
+   background tab in its existing window.
 3. **A new window** only when you deliberately want one — e.g. the existing
    window is full of Iliyas's unrelated active work, or you need isolation
    (different window size, a flow he should watch separately). Say why.
@@ -202,7 +224,7 @@ defaults to the fixed endpoint `http://127.0.0.1:18800` (run `connect.sh`
 first); `$CDP_HTTP` overrides that only when running somewhere else.
 
 ```bash
-python3 cdp.py profiles             # list running profiles by their open tabs
+python3 cdp.py profiles             # every profile, running or not, with its tabs
 python3 cdp.py get -p 2             # selected proxy and exit of profile 2
 python3 cdp.py list -p 2            # the extension's proxies, * = selected
 python3 cdp.py use ie -p 2          # select a listed proxy by country (or by id)
@@ -215,16 +237,20 @@ python3 cdp.py direct -p 2          # back to direct
 Every switching command prints the exit the extension then measured:
 `{"ip", "country"}`, or `{"error"}` when nothing goes through.
 
-`--profile` / `-p` takes an index from `profiles` or a substring of a
-URL/title of a tab open in that profile. With a single profile running it can
-be omitted; with several it is required — the tool refuses to guess, because
-setting a proxy on the wrong profile changes what Iliyas is browsing through.
+`--profile` / `-p` takes an index from `profiles`, a profile name or dir
+(`Nolan`, `Default`), or a substring of a URL/title of a tab open in that
+profile. Proxy commands need the profile running. With a single profile
+running it can be omitted; with several it is required — the tool refuses to
+guess, because setting a proxy on the wrong profile changes what Iliyas is
+browsing through.
 
-Two gotchas the tool hides: the extension is MV3, so its per-profile service
-worker sleeps and drops out of the target list — and a sleeping worker in a
-*specific* profile can't be woken via `Target.createTarget` (CDP refuses real
-profiles' browserContextIds). `cdp.py` wakes it by `window.open`ing a
-throwaway tab from one of that profile's own pages, CDP-navigating it to the
+Gotchas the tool hides: CDP knows profiles only as browserContextIds, so
+`cdp.py` reads each one's directory from `chrome://version` in a throwaway
+tab, once per browser run (cached in
+`~/.cache/windows-host-browser/profiles.json`), and the names from
+`C:\chrome-debug\Local State` over ssh. The extension is MV3, so its
+per-profile service worker sleeps and drops out of the target list; `cdp.py`
+wakes it by opening a throwaway tab in that profile, CDP-navigating it to the
 extension popup, then closing it.
 
 The extension answers the proxy's login itself from its list, so
