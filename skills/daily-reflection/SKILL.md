@@ -62,18 +62,24 @@ wrong from what the user said in the heat of the moment.
    - phrase it as what to do, with the date;
    - if the rule already exists and was ignored, make it clearer or move it
      up; don't add a second copy;
-   - don't write what may be the user's mistake. List it in the report
-     instead, as a question for the user.
+   - don't write what may be the user's mistake; leave it out;
+   - when the user said they don't want some rule, don't write the opposite
+     rule: just don't have one.
    - Also check the day's uncommitted edits to both files
      (`git -C ~/.agents/memory diff`) for duplicates and format.
 6. `mv <state file>.next <state file>`, then
    `git -C ~/.agents/memory add -A` and
    `git -C ~/.agents/memory commit -m "reflection <dd.mm> — <what changed>"`.
    Git keeps every version, so a wrong rule can be found and reverted later.
-7. Report in this thread, in the user's language, in plain words:
-   - the 3–5 main conflicts of the day: the thread link, what went wrong, why;
-   - the rules you wrote or changed;
-   - the questions for the user: where they may have been wrong or contradicted
-     themselves.
-   Settle the thread (`t3_thread_organize`, action `settle`) unless there are
-   questions for the user; a thread left unsettled is a task for them.
+7. Find the work the user explicitly asked to get done that is still not
+   done: a request with no PR, a PR waiting for the user's "continue", a fix
+   an agent promised and dropped. Check its current state (main, deploys,
+   data) first; another chat may have finished it. When you are sure it is
+   what the user wants and how to do it is clear, do it yourself: open the PR
+   and drive it through review, merging only where the memory allows.
+8. Report in this thread, in the user's language, only that unfinished work:
+   what was asked and where (thread link), and the PR you opened or why you
+   could not. Don't list the day's conflicts, the rules you wrote or
+   questions: the rules are in the memory's git log, and the reader does not
+   want a review of the day. With nothing unfinished, write one line saying
+   so. Then settle the thread (`t3_thread_organize`, action `settle`).
